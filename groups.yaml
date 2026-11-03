@@ -2,9 +2,10 @@
 #
 # 唯一事实来源：每组包含哪些仓库、这一组当前的统一版本。
 # 规则：
-#   1. 组内所有仓库的 debian/changelog 版本必须等于本组的 version；
+#   1. 发布完成后，组内所有仓库的 debian/changelog 版本必须等于本组的 version；
 #   2. 组内任一仓库有更新，整组一起升 version 并一起重新打包；
 #   3. 依赖关系（debian/control 里的 >= / >>）不因此修改。
+# 首次统一前，version 作为起始基线；首轮目标须高于它和所有成员当前版本。
 #
 # 基线 PR 的 group-release-ready 检查确认整组完成；组件侧校验尚未接入。
 

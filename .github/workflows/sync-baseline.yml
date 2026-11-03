@@ -369,7 +369,7 @@ jobs:
                   info = api(f"repos/{name}")
                   member = {"repo": name, "base": info["default_branch"], "workflow": workflow(group, name)}
                   actual = head_version(name, member["base"])
-                  if actual != current:
+                  if release and actual != current:
                       raise RuntimeError(f"{name}={actual} 与基线 {current} 不一致，请先核实已有发布")
                   if not compare(target, "gt", actual):
                       raise RuntimeError(f"{target} 必须大于 {name} 的实际版本 {actual}")
@@ -412,7 +412,7 @@ jobs:
                               names = repo_names(cfg, group)
                               versions = parallel(lambda name: head_version(name, api(f"repos/{name}")["default_branch"]), names)
                               if any(v != cfg["groups"][group]["version"] for v in versions):
-                                  failures.append(f"{group}: 无发布记录但版本偏离基线，需人工核实")
+                                  print(f"{group}: 尚未统一，请从 Release group 发起首轮发布")
                           continue
                       check(repo, pr, release, cfg)
                   except Exception as error:

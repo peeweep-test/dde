@@ -198,6 +198,86 @@ class GroupReleaseTests(unittest.TestCase):
         self.assertEqual(len(self.gh.start(dry_run=True)), 2)
         self.assertEqual(self.gh.writes, [])
 
+    def test_first_release_unifies_mixed_versions_and_resumes(self):
+        self.gh.cfg['groups']['G2']['members'].append('go-dbus-factory')
+        self.gh.configs['base'] = copy.deepcopy(self.gh.cfg)
+        self.gh.live.update({'peeweep-test/go-lib': '6.0.15',
+                             'peeweep-test/go-dbus-factory': '2.0.31'})
+        initial = copy.deepcopy(self.gh.live)
+        self.assertEqual(len(self.gh.start(dry_run=True)), 3)
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(len(self.gh.start()), 3)
+        self.assertEqual(self.gh.live, initial)
+        self.gh.member_pr('peeweep-test/go-lib', merged=True)
+        self.assertEqual({m['repo'] for m in self.gh.start()},
+                         {'peeweep-test/dde-api', 'peeweep-test/go-dbus-factory'})
+        with self.assertRaisesRegex(RuntimeError, '正在发布'):
+            self.gh.start(version='6.0.51')
+        for repo in ('peeweep-test/dde-api', 'peeweep-test/go-dbus-factory'):
+            self.gh.member_pr(repo, merged=True)
+        self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        self.assertFalse(self.gh.prs[0]['draft'])
+        self.assertEqual(self.gh.cfg['groups']['G2']['version'], '6.0.49')
+        self.gh.merge()
+        self.assertEqual(self.gh.cfg['groups']['G2']['version'], '6.0.50')
+        self.assertEqual(len(self.gh.start(version='6.0.51')), 3)
+
+    def test_first_target_must_exceed_every_member(self):
+        for actual in ('6.0.50', '6.0.51'):
+            for dry_run in (True, False):
+                with self.subTest(actual=actual, dry_run=dry_run):
+                    gh = GitHub()
+                    gh.live['peeweep-test/go-lib'] = actual
+                    with self.assertRaisesRegex(RuntimeError, '必须大于.*实际版本'):
+                        gh.start(dry_run=dry_run)
+                    self.assertEqual(gh.writes, [])
+
+    def test_first_release_can_start_above_an_outdated_baseline(self):
+        self.gh.live['peeweep-test/go-lib'] = '6.0.51'
+        self.assertEqual(len(self.gh.start(version='6.0.52', dry_run=True)), 2)
+        self.assertEqual(self.gh.writes, [])
+
+    def test_first_release_blocks_existing_member_release_pr(self):
+        for branch in ('release-6.0.16', 'automation/update-changelog/6.0.16'):
+            with self.subTest(branch=branch):
+                gh = GitHub()
+                gh.live['peeweep-test/go-lib'] = '6.0.15'
+                gh.member_prs['peeweep-test/go-lib'] = [
+                    {'state': 'open', 'head': {'ref': branch}}]
+                with self.assertRaisesRegex(RuntimeError, '存在未完成的发布 PR'):
+                    gh.start()
+                self.assertEqual(gh.writes, [])
+
+    def test_completed_release_drift_cannot_be_treated_as_first_release(self):
+        for actual in ('6.0.15', '6.0.51'):
+            with self.subTest(actual=actual):
+                self.gh = GitHub()
+                self.complete_g2()
+                self.gh.live['peeweep-test/go-lib'] = actual
+                before = len(self.gh.writes)
+                with self.assertRaises(RuntimeError):
+                    self.gh.start(version='6.0.52')
+                self.assertEqual(before, len(self.gh.writes))
+                with self.assertRaisesRegex(RuntimeError, 'peeweep-test/go-lib'):
+                    self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+                self.assertEqual(self.gh.cfg['groups']['G2']['version'], '6.0.50')
+
+    def test_sync_before_first_release_only_reports_uninitialized_group(self):
+        self.gh.live['peeweep-test/go-lib'] = '6.0.15'
+        with patch('builtins.print') as output:
+            self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        output.assert_called_once_with('G2: 尚未统一，请从 Release group 发起首轮发布')
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.cfg['groups']['G2']['version'], '6.0.49')
+
+    def test_uninitialized_group_does_not_block_other_group_readiness(self):
+        self.gh.live['peeweep-test/go-lib'] = '6.0.15'
+        self.gh.start('G1', '6.7.53')
+        self.gh.member_pr('peeweep-test/dtkcore', merged=True, group='G1')
+        self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        self.assertFalse(self.gh.prs[0]['draft'])
+        self.assertEqual(self.gh.cfg['groups']['G2']['version'], '6.0.49')
+
     def test_same_group_new_target_is_blocked_even_without_member_prs(self):
         self.gh.start()
         before = len(self.gh.writes)
