@@ -34,7 +34,8 @@ jobs:
       version: ${{ inputs.version }}
       dry_run: ${{ inputs.dry_run }}
     secrets:
-      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      APP_ID: ${{ secrets.APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
 
   dispatch:
     needs: plan
@@ -45,9 +46,20 @@ jobs:
       matrix:
         member: ${{ fromJSON(needs.plan.outputs.repos) }}
     steps:
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ matrix.member.repo }}
+          permission-actions: write
+          permission-contents: read
+
       - name: Dispatch ${{ matrix.member.repo }}
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GROUP: ${{ inputs.group }}
           VERSION: ${{ inputs.version }}
           REPO: ${{ matrix.member.repo }}

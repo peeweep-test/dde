@@ -13,7 +13,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = yaml.safe_load((ROOT / '.github/workflows/sync-baseline.yml').read_text())
-RUN = WORKFLOW['jobs']['coordinate']['steps'][1]['run']
+RUN = next(step['run'] for step in WORKFLOW['jobs']['coordinate']['steps'] if step.get('id') == 'coordinate')
 CODE = RUN.split("<<'PY'", 1)[1].split('\n', 1)[1].rsplit('\nPY', 1)[0]
 
 
@@ -644,8 +644,21 @@ class GroupReleaseTests(unittest.TestCase):
         self.assertEqual(release['jobs']['plan']['uses'], './.github/workflows/sync-baseline.yml')
         self.assertIn('inputs.group', release['concurrency']['group'])
         self.assertEqual(set(release.get('on', release.get(True))['workflow_dispatch']['inputs']), {'group', 'version', 'dry_run'})
-        self.assertNotIn('${{', release['jobs']['dispatch']['steps'][0]['run'])
+        self.assertNotIn('${{', release['jobs']['dispatch']['steps'][-1]['run'])
         self.assertNotIn('actions/checkout', str(WORKFLOW))
+
+    def test_app_token_is_created_before_api_calls_in_each_job(self):
+        release = yaml.safe_load((ROOT / '.github/workflows/release-group.yml').read_text())
+        declared = WORKFLOW.get('on', WORKFLOW.get(True))['workflow_call']['secrets']
+        self.assertEqual(set(declared), {'APP_ID', 'APP_PRIVATE_KEY'})
+        self.assertEqual(release['jobs']['plan']['secrets'], {
+            name: '${{ secrets.' + name + ' }}' for name in declared})
+        for steps in (WORKFLOW['jobs']['coordinate']['steps'], release['jobs']['dispatch']['steps']):
+            token = next(step for step in steps if step.get('id') == 'app_token')
+            api_step = next(step for step in steps if 'GH_TOKEN' in step.get('env', {}))
+            self.assertLess(steps.index(token), steps.index(api_step))
+            self.assertNotIn('if', token)
+            self.assertEqual(api_step['env']['GH_TOKEN'], '${{ steps.app_token.outputs.token }}')
 
 
 if __name__ == '__main__':

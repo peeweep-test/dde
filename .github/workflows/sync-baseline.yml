@@ -18,7 +18,9 @@ on:
         required: true
         type: boolean
     secrets:
-      RELEASE_TOKEN:
+      APP_ID:
+        required: true
+      APP_PRIVATE_KEY:
         required: true
     outputs:
       repos:
@@ -37,13 +39,25 @@ jobs:
     outputs:
       repos: ${{ steps.coordinate.outputs.repos }}
     steps:
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-actions: read
+          permission-contents: write
+          permission-pull-requests: write
+          permission-statuses: write
+
       - name: Install deps
         run: pip install --quiet pyyaml
 
       - name: 协调整组发布
         id: coordinate
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GROUP: ${{ inputs.group }}
           VERSION: ${{ inputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}

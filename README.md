@@ -2,7 +2,7 @@
 
 本仓库维护 DDE 各组件组的版本。发版时，在这里统一触发成员仓库的 changelog 更新。
 
-本分支用于 `peeweep-test` 组织的 Actions 测试，成员工作流只派发到该组织。运行前需在测试仓库配置 `RELEASE_TOKEN`。
+本分支用于 `peeweep-test` 组织的 Actions 测试，成员工作流只派发到该组织。运行前需让测试仓库读取组织 Secret `APP_ID` 和 `APP_PRIVATE_KEY`。
 
 这里原先维护 UOS 20 的 `dde` 元包，2023 年后停止更新，现已停用。旧打包文件保留在 Git 历史中。
 
@@ -79,16 +79,20 @@
 
 ## 配置与上线
 
-在 dde 仓库添加 secret `RELEASE_TOKEN`，使用个人访问令牌（PAT）并授予以下权限：
+沿用组织的 `APP_ID` 和 `APP_PRIVATE_KEY`，并允许 dde 仓库访问这两个 Secret。
+GitHub App 须安装到 dde 和参与测试的成员仓库，并授予以下仓库权限：
 
-- dde：`contents: write`、`pull requests: write`、`commit statuses: write`。
-- 成员仓库：`actions: write`、`contents: read`、`pull requests: read`。
+- `Actions`：Read and write。
+- `Contents`：Read and write。
+- `Pull requests`：Read and write。
+- `Commit statuses`：Read and write。
 
 成员仓库创建 changelog PR 所用的 GitHub App secret 沿用现有工作流配置。
-本仓库的工作流统一使用 `RELEASE_TOKEN` 访问 GitHub；认证或查询失败时，运行会直接停止。
+本仓库各 job 单独生成 GitHub App 安装 Token，结束后自动撤销；派发 job 的 Token 只访问对应成员仓库。
+认证或查询失败时，运行会直接停止。
 
 给 dde 默认分支启用保护规则，把 **`group-release-ready`** 设为必需检查，并禁止绕过。
-配置时选择由 `RELEASE_TOKEN` 发布的提交状态。成员发布未完成时，保护规则会阻止基线 PR 合入。
+配置时将该 GitHub App 设为检查状态的来源。成员发布未完成时，保护规则会阻止基线 PR 合入。
 普通 PR 同样需要通过此检查；手工修改基线版本的 PR 无法通过。
 
 基线 PR 创建成功前，保留 `baseline/*` 分支。此时发布记录只在该分支中，删除后无法自动恢复。
