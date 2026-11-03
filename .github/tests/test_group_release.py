@@ -18,7 +18,7 @@ CODE = RUN.split("<<'PY'", 1)[1].split('\n', 1)[1].rsplit('\nPY', 1)[0]
 
 
 class GitHub:
-    repo = 'linuxdeepin/dde'
+    repo = 'peeweep-test/dde'
 
     def __init__(self):
         self.cfg = {'groups': {
@@ -32,7 +32,7 @@ class GitHub:
         self.prs = []
         self.member_prs = {}
         self.versions = {}
-        self.live = {f'linuxdeepin/{m}': g['version'] for g in self.cfg['groups'].values() for m in g['members']}
+        self.live = {f'peeweep-test/{m}': g['version'] for g in self.cfg['groups'].values() for m in g['members']}
         self.runs = {}
         self.writes = []
         self.statuses = {}
@@ -189,7 +189,7 @@ class GroupReleaseTests(unittest.TestCase):
         members = self.gh.start()
         self.assertEqual(len(members), 2)
         paths = [p for p, _, _ in self.gh.writes]
-        self.assertLess(paths.index('repos/linuxdeepin/dde/git/refs'), paths.index('repos/linuxdeepin/dde/pulls'))
+        self.assertLess(paths.index('repos/peeweep-test/dde/git/refs'), paths.index('repos/peeweep-test/dde/pulls'))
         self.assertTrue(self.gh.prs[0]['draft'])
         self.assertEqual(self.gh.cfg['groups']['G2']['version'], '6.0.49')
         self.assertEqual(self.gh.configs[self.gh.prs[0]['head']['sha']]['groups']['G2']['version'], '6.0.50')
@@ -213,25 +213,25 @@ class GroupReleaseTests(unittest.TestCase):
     def test_other_group_old_base_does_not_block_next_release(self):
         self.gh.start()
         self.gh.start('G1', '6.7.53')
-        for repo in ('linuxdeepin/go-lib', 'linuxdeepin/dde-api'):
+        for repo in ('peeweep-test/go-lib', 'peeweep-test/dde-api'):
             self.gh.member_pr(repo, merged=True)
         self.gh.merge()
         self.assertEqual(len(self.gh.start(version='6.0.51')), 2)
 
     def test_resume_skips_merged_pending_and_running(self):
         self.gh.start()
-        self.gh.member_pr('linuxdeepin/go-lib', merged=True)
-        self.gh.member_pr('linuxdeepin/dde-api')
+        self.gh.member_pr('peeweep-test/go-lib', merged=True)
+        self.gh.member_pr('peeweep-test/dde-api')
         self.assertEqual(self.gh.start(), [])
-        self.gh.member_prs.pop('linuxdeepin/dde-api')
-        self.gh.runs['linuxdeepin/dde-api'] = [{'created_at': '9999-01-01T00:00:00Z', 'head_branch': 'master', 'status': 'in_progress'}]
+        self.gh.member_prs.pop('peeweep-test/dde-api')
+        self.gh.runs['peeweep-test/dde-api'] = [{'created_at': '9999-01-01T00:00:00Z', 'head_branch': 'master', 'status': 'in_progress'}]
         self.assertEqual(self.gh.start(), [])
         self.gh.runs.clear()
-        self.assertEqual([m['repo'] for m in self.gh.start()], ['linuxdeepin/dde-api'])
+        self.assertEqual([m['repo'] for m in self.gh.start()], ['peeweep-test/dde-api'])
 
     def test_all_members_merged_still_blocks_next_until_baseline_merge(self):
         self.gh.start()
-        for repo in ('linuxdeepin/go-lib', 'linuxdeepin/dde-api'):
+        for repo in ('peeweep-test/go-lib', 'peeweep-test/dde-api'):
             self.gh.member_pr(repo, merged=True)
         self.gh.start()
         self.assertFalse(self.gh.prs[0]['draft'])
@@ -276,17 +276,17 @@ class GroupReleaseTests(unittest.TestCase):
 
     def test_direct_push_is_not_proof_of_pr_merge(self):
         self.gh.start()
-        self.gh.live['linuxdeepin/go-lib'] = '6.0.50'
+        self.gh.live['peeweep-test/go-lib'] = '6.0.50'
         with self.assertRaisesRegex(RuntimeError, '未找到'):
             self.gh.start()
 
     def test_member_closed_pr_and_drift_fail_closed(self):
         self.gh.start()
-        self.gh.member_pr('linuxdeepin/go-lib', pending=False)
+        self.gh.member_pr('peeweep-test/go-lib', pending=False)
         with self.assertRaisesRegex(RuntimeError, '已关闭'):
             self.gh.start()
         self.gh.member_prs.clear()
-        self.gh.live['linuxdeepin/go-lib'] = '6.0.51'
+        self.gh.live['peeweep-test/go-lib'] = '6.0.51'
         with self.assertRaisesRegex(RuntimeError, '超过本轮'):
             self.gh.start()
 
@@ -357,11 +357,11 @@ class GroupReleaseTests(unittest.TestCase):
         exec(compile(CODE, 'sync-baseline.py', 'exec'), ns)
         with patch('subprocess.run', return_value=subprocess.CompletedProcess([], 1, '', 'Forbidden (HTTP 403)')):
             with self.assertRaisesRegex(RuntimeError, 'GitHub API'):
-                ns['api']('repos/linuxdeepin/dde/git/ref/heads/baseline/G2', missing=True)
+                ns['api']('repos/peeweep-test/dde/git/ref/heads/baseline/G2', missing=True)
         with patch('subprocess.run', return_value=subprocess.CompletedProcess([], 1, '', 'Not found (HTTP 404)')):
-            self.assertIsNone(ns['api']('repos/linuxdeepin/dde/git/ref/heads/baseline/G2', missing=True))
+            self.assertIsNone(ns['api']('repos/peeweep-test/dde/git/ref/heads/baseline/G2', missing=True))
         with patch('subprocess.run', return_value=subprocess.CompletedProcess([], 0, '[[{"number": 1}], [{"number": 2}]]', '')):
-            self.assertEqual(ns['api']('repos/linuxdeepin/dde/pulls', paginate=True), [{'number': 1}, {'number': 2}])
+            self.assertEqual(ns['api']('repos/peeweep-test/dde/pulls', paginate=True), [{'number': 1}, {'number': 2}])
 
     def test_github_error_keeps_reserved_release_locked(self):
         self.gh.start()
@@ -380,7 +380,7 @@ class GroupReleaseTests(unittest.TestCase):
         self.gh.start('G1', '6.7.53')
         self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
         self.assertEqual(len(self.gh.prs), 2)
-        for repo in ('linuxdeepin/go-lib', 'linuxdeepin/dde-api'):
+        for repo in ('peeweep-test/go-lib', 'peeweep-test/dde-api'):
             self.gh.member_pr(repo, merged=True)
         self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
         g2 = next(p for p in self.gh.prs if p['head']['ref'] == 'baseline/G2')
@@ -392,7 +392,7 @@ class GroupReleaseTests(unittest.TestCase):
 
     def test_closed_marker_cannot_get_success_status(self):
         self.gh.start()
-        for repo in ('linuxdeepin/go-lib', 'linuxdeepin/dde-api'):
+        for repo in ('peeweep-test/go-lib', 'peeweep-test/dde-api'):
             self.gh.member_pr(repo, merged=True)
         self.gh.prs[0]['state'] = 'closed'
         with self.assertRaises(RuntimeError):
@@ -445,7 +445,7 @@ class GroupReleaseTests(unittest.TestCase):
 
     def test_periodic_sync_error_does_not_skip_other_group(self):
         self.gh.start()
-        for repo in ('linuxdeepin/go-lib', 'linuxdeepin/dde-api'):
+        for repo in ('peeweep-test/go-lib', 'peeweep-test/dde-api'):
             self.gh.member_pr(repo, merged=True)
         original = self.gh.ns['head_version']
         def fail_g1(repo, ref):
@@ -467,7 +467,7 @@ class GroupReleaseTests(unittest.TestCase):
 
     def complete_g2(self):
         self.gh.start()
-        for repo in ('linuxdeepin/go-lib', 'linuxdeepin/dde-api'):
+        for repo in ('peeweep-test/go-lib', 'peeweep-test/dde-api'):
             self.gh.member_pr(repo, merged=True)
         self.gh.start()
         self.gh.merge()
@@ -508,7 +508,7 @@ class GroupReleaseTests(unittest.TestCase):
         self.gh.fail_pr = True
         with self.assertRaises(RuntimeError):
             self.gh.start(version='6.0.51')
-        self.gh.live['linuxdeepin/go-lib'] = '6.0.51'
+        self.gh.live['peeweep-test/go-lib'] = '6.0.51'
         before = len(self.gh.writes)
         with self.assertRaisesRegex(RuntimeError, '分支已保留但 PR 未创建'):
             self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
@@ -548,7 +548,7 @@ class GroupReleaseTests(unittest.TestCase):
         with patch.dict(os.environ, GITHUB_RUN_ID='456'):
             self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
         self.assertEqual(len(self.gh.statuses[head]), 1)
-        for repo in ('linuxdeepin/go-lib', 'linuxdeepin/dde-api'):
+        for repo in ('peeweep-test/go-lib', 'peeweep-test/dde-api'):
             self.gh.member_pr(repo, merged=True)
         self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
         self.assertEqual([s['state'] for s in self.gh.statuses[head]], ['success', 'pending'])
@@ -567,7 +567,7 @@ class GroupReleaseTests(unittest.TestCase):
         self.assertEqual(len(self.gh.start('G1', '6.7.53')), 1)
         self.event(self.gh.prs[1])
         self.assertEqual(self.gh.statuses[head][0]['state'], 'pending')
-        self.gh.member_pr('linuxdeepin/dtkcore', merged=True, group='G1')
+        self.gh.member_pr('peeweep-test/dtkcore', merged=True, group='G1')
         self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
         self.assertEqual(self.gh.statuses[head][0]['state'], 'success')
 
@@ -614,7 +614,7 @@ class GroupReleaseTests(unittest.TestCase):
         self.gh.start('G1', '6.7.53')
         g1_sha = self.gh.prs[0]['head']['sha']
         self.gh.start()
-        for repo in ('linuxdeepin/go-lib', 'linuxdeepin/dde-api'):
+        for repo in ('peeweep-test/go-lib', 'peeweep-test/dde-api'):
             self.gh.member_pr(repo, merged=True)
         original_version, original_api = self.gh.head_version, self.gh.api
         def failed_version(repo, ref):

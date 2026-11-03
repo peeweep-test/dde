@@ -128,7 +128,7 @@ jobs:
 
           def repo_names(cfg, group):
               overrides = cfg.get("repo_overrides", {})
-              return [f"linuxdeepin/{overrides.get(m, m)}" for m in cfg["groups"][group]["members"]]
+              return [f"peeweep-test/{overrides.get(m, m)}" for m in cfg["groups"][group]["members"]]
 
           def workflow(group, repo):
               if group != "G1":
