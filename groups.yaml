@@ -10,7 +10,7 @@
 
 # 目录名与 GitHub 仓库名不一致的成员
 repo_overrides:
-  dde-session-shell-v25: dde-session-shell-snipe
+  dde-session-shell-v25: dde-session-shell
 
 groups:
   G1:
