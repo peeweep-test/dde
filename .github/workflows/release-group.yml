@@ -1,9 +1,6 @@
 name: Release group
 
-# 唯一升 changelog 入口：按 groups.yaml 给整组成员派发 call-update-changelog.yml。
-# 成员仓库里的 changelog 由 linuxdeepin/.github 的复用 workflow 生成，本仓库不实现。
-# 需要 secret RELEASE_TOKEN：对 linuxdeepin 下成员仓库有 actions:write 权限。
-
+# 先保留本组基线草稿 PR，再并行派发；未完成的发布不能换目标版本。
 on:
   workflow_dispatch:
     inputs:
@@ -11,18 +8,13 @@ on:
         description: 组
         required: true
         type: choice
-        options: [G1, G2, G3, G5, G5-icons]
+        options: [G1, G2, G3, G4, G5]
       version:
-        description: 目标版本（必须大于组内当前版本）
+        description: 目标版本（相同目标可恢复未完成的发布）
         required: true
         type: string
       dry_run:
-        description: 只打印计划，不触发
-        required: false
-        type: boolean
-        default: true
-      create_pr:
-        description: 在成员仓库创建 PR（false 则只上传 changelog artifact）
+        description: 只检查并打印计划，不创建 PR 或派发
         required: false
         type: boolean
         default: true
@@ -31,93 +23,53 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-group
+  group: release-group-${{ inputs.group }}
   cancel-in-progress: false
 
 jobs:
   plan:
-    runs-on: ubuntu-latest
-    outputs:
-      repos: ${{ steps.list.outputs.repos }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install deps
-        run: pip install --quiet pyyaml
-
-      - name: 校验并列出成员
-        id: list
-        run: |
-          python3 - "${{ inputs.group }}" "${{ inputs.version }}" <<'PY' >> "$GITHUB_OUTPUT"
-          import json, subprocess, sys, yaml
-
-          group, version = sys.argv[1], sys.argv[2]
-          cfg = yaml.safe_load(open("groups.yaml"))
-          if group not in cfg["groups"]:
-              sys.exit(f"未知组: {group}")
-
-          cur = cfg["groups"][group]["version"]
-          if subprocess.run(["dpkg", "--compare-versions", version, "gt", cur]).returncode:
-              sys.exit(f"{version} 必须大于 {group} 当前版本 {cur}")
-
-          ov = cfg.get("repo_overrides", {})
-          repos = [ov.get(m, m) for m in cfg["groups"][group]["members"]]
-          print(f"repos={json.dumps(repos)}")
-          PY
-
-      - name: 计划
-        run: |
-          echo "组: ${{ inputs.group }}"
-          echo "版本: ${{ inputs.version }}"
-          echo "${{ steps.list.outputs.repos }}" | python3 -c 'import json,sys; [print("  -", r) for r in json.load(sys.stdin)]'
+    uses: ./.github/workflows/sync-baseline.yml
+    with:
+      group: ${{ inputs.group }}
+      version: ${{ inputs.version }}
+      dry_run: ${{ inputs.dry_run }}
+    secrets:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
 
   dispatch:
     needs: plan
-    if: ${{ !inputs.dry_run }}
+    if: ${{ !inputs.dry_run && needs.plan.outputs.repos != '[]' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        repo: ${{ fromJSON(needs.plan.outputs.repos) }}
+        member: ${{ fromJSON(needs.plan.outputs.repos) }}
     steps:
-      - name: Dispatch ${{ matrix.repo }}
+      - name: Dispatch ${{ matrix.member.repo }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GROUP: ${{ inputs.group }}
+          VERSION: ${{ inputs.version }}
+          REPO: ${{ matrix.member.repo }}
+          BASE: ${{ matrix.member.base }}
+          WORKFLOW: ${{ matrix.member.workflow }}
+          ACTOR: ${{ github.actor }}
+          EMAIL: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
         run: |
           set -euo pipefail
-          repo="linuxdeepin/${{ matrix.repo }}"
-
-          # 成员仓库有两种 changelog workflow，按名字自动识别
-          info=$(gh workflow list -R "$repo" --json name,path \
-            --jq '.[] | select(.name == "Call update changelog" or .name == "Auto Release") | "\(.name)\t\(.path)"' \
-            | head -1)
-
-          if [ -z "$info" ]; then
-            echo "::warning::${{ matrix.repo }} 没有可用的 changelog workflow，跳过"
-            exit 0
+          if [ "$GROUP" = "G1" ]; then
+            gh workflow run "$WORKFLOW" -R "$REPO" --ref "$BASE" \
+              -f version="$VERSION" \
+              -f name="$ACTOR" \
+              -f email="$EMAIL" \
+              -f timezone=Asia/Shanghai
+          else
+            gh workflow run "$WORKFLOW" -R "$REPO" --ref "$BASE" \
+              -f version="$VERSION" \
+              -f name="$ACTOR" \
+              -f email="$EMAIL" \
+              -f base_branch="$BASE" \
+              -f distribution=unstable \
+              -f create_pr=true
           fi
-
-          wf_name=$(printf '%s' "$info" | cut -f1)
-          wf_file=$(basename "$(printf '%s' "$info" | cut -f2)")
-          email="${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
-
-          case "$wf_name" in
-            "Call update changelog")
-              gh workflow run "$wf_file" -R "$repo" \
-                -f version="${{ inputs.version }}" \
-                -f name="${{ github.actor }}" \
-                -f email="$email" \
-                -f base_branch=master \
-                -f distribution=unstable \
-                -f create_pr=${{ inputs.create_pr }}
-              ;;
-            "Auto Release")
-              gh workflow run "$wf_file" -R "$repo" \
-                -f version="${{ inputs.version }}" \
-                -f name="${{ github.actor }}" \
-                -f email="$email" \
-                -f timezone=Asia/Shanghai
-              ;;
-          esac
-
-          echo "已触发 ${{ matrix.repo }}（$wf_name）-> ${{ inputs.version }}"
+          echo "已触发 $REPO -> $VERSION；成员执行结果见基线 PR"

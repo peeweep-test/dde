@@ -6,7 +6,7 @@
 #   2. 组内任一仓库有更新，整组一起升 version 并一起重新打包；
 #   3. 依赖关系（debian/control 里的 >= / >>）不因此修改。
 #
-# 校验：各组件的 CI 读取本文件，比对自身 changelog 版本。
+# 基线 PR 的 group-release-ready 检查确认整组完成；组件侧校验尚未接入。
 
 # 目录名与 GitHub 仓库名不一致的成员
 repo_overrides:
@@ -34,11 +34,9 @@ groups:
       - go-lib
       - go-dbus-factory
       - dde-api
-      - deepin-pw-check
-      - dde-app-services
 
-  # 原 G3（会话与守护进程核心）与 G4（桌面应用与 UI）已合并：
-  # G4 的成员运行时/构建期依赖 G3，ABI 变化需要一起重编，故统一为一组。
+  # 会话核心与桌面应用统一为 G3：
+  # 桌面应用与 UI 运行时/构建期依赖会话核心，ABI 变化需要一起重编。
   G3:
     name: 会话核心与桌面应用
     version: "6.1.113"
@@ -60,8 +58,10 @@ groups:
       - deepin-update-ui
       - dcc-insider-plugin
       - xdg-desktop-portal-dde
+      - deepin-pw-check
+      - dde-app-services
 
-  G5:
+  G4:
     name: 外观与主题
     version: "6.5.12"
     members:
@@ -70,8 +70,8 @@ groups:
       - deepin-face
       - deepin-screensaver
 
-  # 单成员组：日期版本，独立成线，不并入 G5
-  G5-icons:
+  # 单成员组：日期版本，独立成线，不并入 G4
+  G5:
     name: 图标主题
     version: "2026.02.27"
     members:
