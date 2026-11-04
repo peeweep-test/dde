@@ -74,7 +74,7 @@ groups:
   # 单成员组：日期版本，独立成线，不并入 G4
   G5:
     name: 图标主题
-    version: "2026.02.27"
+    version: "2026.11.04"
     members:
       - deepin-icon-theme
 
