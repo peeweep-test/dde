@@ -64,7 +64,7 @@ groups:
 
   G4:
     name: 外观与主题
-    version: "6.5.12"
+    version: "6.5.13"
     members:
       - dde-appearance
       - deepin-desktop-theme
