@@ -40,7 +40,7 @@ groups:
   # 桌面应用与 UI 运行时/构建期依赖会话核心，ABI 变化需要一起重编。
   G3:
     name: 会话核心与桌面应用
-    version: "6.1.113"
+    version: "6.1.114"
     members:
       - dde-daemon
       - dde-services
