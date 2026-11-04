@@ -78,6 +78,8 @@ jobs:
 
           MARKER = "<!-- group-release\n"
           CONTEXT = "group-release-ready"
+          MEMBER_LINKS_START = "<!-- group-release-members:start -->"
+          MEMBER_LINKS_END = "<!-- group-release-members:end -->"
 
           def api(path, data=None, method=None, missing=False, paginate=False):
               args = ["gh", "api", path]
@@ -225,18 +227,23 @@ jobs:
                           raise RuntimeError("同步后的分支不再是本轮单组基线变更")
               return release
 
-          def member_state(release, member, live_required=True):
+          def member_prs(release, member):
+              repo = member["repo"]
+              query = urlencode({"state": "all", "head": f"{repo.split('/')[0]}:{member_branch(release['group'], release['version'])}",
+                                 "base": member["base"], "per_page": 100})
+              prs = api(f"repos/{repo}/pulls?{query}", paginate=True)
+              return [p for p in prs if p["created_at"] >= release["started_at"]
+                      and p["head"]["repo"] and p["head"]["repo"]["full_name"] == repo]
+
+          def member_state(release, member, live_required=True, prs=None):
               repo, target = member["repo"], release["version"]
               if api(f"repos/{repo}")["default_branch"] != member["base"]:
                   raise RuntimeError(f"{repo} 的默认分支已改变，请先核实本轮发布")
               live = head_version(repo, member["base"]) if live_required else None
               if live_required and compare(live, "gt", target):
                   raise RuntimeError(f"{repo} 已到 {live}，超过本轮 {target}，需人工核实")
-              query = urlencode({"state": "all", "head": f"{repo.split('/')[0]}:{member_branch(release['group'], target)}",
-                                 "base": member["base"], "per_page": 100})
-              prs = api(f"repos/{repo}/pulls?{query}", paginate=True)
-              prs = [p for p in prs if p["created_at"] >= release["started_at"]
-                     and p["head"]["repo"] and p["head"]["repo"]["full_name"] == repo]
+              if prs is None:
+                  prs = member_prs(release, member)
               for pr in prs:
                   if pr["merged_at"] and head_version(repo, pr["merge_commit_sha"]) == target and (not live_required or live == target):
                       return "merged"
@@ -257,8 +264,9 @@ jobs:
                   return "running"
               return "missing"
 
-          def states(release, live_required=True):
-              return parallel(lambda m: member_state(release, m, live_required), release["members"])
+          def states(release, live_required=True, prs=None):
+              return parallel(lambda m: member_state(release, m, live_required,
+                              prs[m["repo"]] if prs is not None else None), release["members"])
 
           def active(repo, base, cfg, group):
               branch = f"baseline/{group}"
@@ -292,11 +300,33 @@ jobs:
                   "description": description,
                   "target_url": f"{os.environ['GITHUB_SERVER_URL']}/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"})
 
+          def member_links(release, prs):
+              lines = [MEMBER_LINKS_START, "### 成员发布 PR", ""]
+              for member in release["members"]:
+                  links = "、".join(f"[#{p['number']}]({p['html_url']})" for p in prs.get(member["repo"], []))
+                  lines.append(f"- {member['repo']}: {links or '尚无发布 PR'}")
+              return "\n".join([*lines, MEMBER_LINKS_END])
+
+          def update_member_links(repo, pr, release, prs):
+              path = f"repos/{repo}/pulls/{pr['number']}"
+              current = api(path)["body"] or ""
+              section = member_links(release, prs)
+              if MEMBER_LINKS_START in current or MEMBER_LINKS_END in current:
+                  pattern = re.escape(MEMBER_LINKS_START) + r".*?" + re.escape(MEMBER_LINKS_END)
+                  match = re.search(pattern, current, re.S)
+                  if current.count(MEMBER_LINKS_START) != 1 or current.count(MEMBER_LINKS_END) != 1 or not match:
+                      raise RuntimeError("基线 PR 的成员链接区块标记不完整或重复，请先修复")
+                  updated = current[:match.start()] + section + current[match.end():]
+              else:
+                  updated = current + ("\n\n" if current else "") + section
+              if updated != current:
+                  api(path, {"body": updated}, method="PATCH")
+
           def body(release):
               return (f"{release['group']} 发布 {release['version']}。\n\n"
                       "成员 changelog PR 全部合并后，group-release-ready 才会通过；基线 PR 合并后本轮结束。\n"
                       "派发失败或关闭本 PR 不会解除锁定；使用相同组和版本恢复本轮。\n\n" +
-                      "\n".join(f"- {m['repo']}" for m in release["members"]))
+                      member_links(release, {}))
 
           def create_pr(repo, branch, base, release):
               return api(f"repos/{repo}/pulls", {"head": branch, "base": base, "draft": True,
@@ -305,7 +335,10 @@ jobs:
           def check(repo, pr, release, cfg):
               if pr["base"]["ref"] != release["base_branch"]:
                   raise RuntimeError("基线 PR 目标已改变，请先核实原发布")
-              results = states(release)
+              members = release["members"]
+              prs = dict(zip([m["repo"] for m in members], parallel(lambda m: member_prs(release, m), members)))
+              update_member_links(repo, pr, release, prs)
+              results = states(release, prs=prs)
               ready = all(s == "merged" for s in results)
               if pr["state"] == "closed" and not pr["merged_at"]:
                   raise RuntimeError("基线 PR 被关闭但未合并；关闭不代表发布完成")

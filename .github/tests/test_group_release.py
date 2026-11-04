@@ -152,7 +152,8 @@ class GitHub:
     def member_pr(self, repo, merged=False, group='G2', pending=True):
         release = self.release(group)
         branch = self.ns['member_branch'](group, release['version'])
-        pr = {'number': 1, 'created_at': '9999-01-01T00:00:00Z', 'state': 'closed' if merged or not pending else 'open',
+        pr = {'number': 1, 'html_url': f'https://github.com/{repo}/pull/1',
+              'created_at': '9999-01-01T00:00:00Z', 'state': 'closed' if merged or not pending else 'open',
               'merged_at': '9999-01-02T00:00:00Z' if merged else None, 'merge_commit_sha': 'member-merge',
               'head': {'ref': branch, 'sha': 'member-head', 'repo': {'full_name': repo}}}
         self.member_prs[repo] = [pr]
@@ -191,6 +192,8 @@ class GroupReleaseTests(unittest.TestCase):
         paths = [p for p, _, _ in self.gh.writes]
         self.assertLess(paths.index('repos/peeweep-test/dde/git/refs'), paths.index('repos/peeweep-test/dde/pulls'))
         self.assertTrue(self.gh.prs[0]['draft'])
+        self.assertIn('### 成员发布 PR', self.gh.prs[0]['body'])
+        self.assertEqual(self.gh.prs[0]['body'].count('尚无发布 PR'), 2)
         self.assertEqual(self.gh.cfg['groups']['G2']['version'], '6.0.49')
         self.assertEqual(self.gh.configs[self.gh.prs[0]['head']['sha']]['groups']['G2']['version'], '6.0.50')
 
@@ -469,6 +472,109 @@ class GroupReleaseTests(unittest.TestCase):
         self.assertTrue(g1['draft'])
         self.assertEqual(self.gh.cfg['groups']['G2']['version'], '6.0.49')
         self.assertEqual(len(self.gh.prs), 2)
+
+    def test_member_links_preserve_latest_manual_notes_and_do_not_repeat_edits(self):
+        self.gh.start()
+        pr = self.gh.prs[0]
+        stale = copy.deepcopy(pr)
+        self.gh.member_pr('peeweep-test/go-lib', merged=True)
+        self.gh.member_pr('peeweep-test/dde-api')
+        prefix, suffix = '人工说明：保留此段\n\n', '\n\n- [ ] 人工验证\n'
+        pr['body'] = prefix + pr['body'] + suffix
+        results = self.gh.ns['check'](self.gh.repo, stale, self.gh.release(), self.gh.cfg)
+        self.assertEqual(results, ['merged', 'pending'])
+        self.assertTrue(pr['body'].startswith(prefix))
+        self.assertTrue(pr['body'].endswith(suffix))
+        for repo in ('peeweep-test/go-lib', 'peeweep-test/dde-api'):
+            self.assertIn(f'[#1](https://github.com/{repo}/pull/1)', pr['body'])
+        self.assertTrue(pr['draft'])
+        self.assertEqual(self.gh.cfg['groups']['G2']['version'], '6.0.49')
+        self.event(pr)
+        edits = [data for _, data, method in self.gh.writes if method == 'PATCH' and 'body' in data]
+        self.assertEqual(edits, [{'body': pr['body']}])
+
+    def test_legacy_baseline_description_gets_links_without_losing_notes(self):
+        self.gh.start()
+        pr = self.gh.prs[0]
+        original = 'G2 发布 6.0.50。\n\n- peeweep-test/go-lib\n\n人工备注\n'
+        pr['body'] = original
+        self.gh.member_pr('peeweep-test/go-lib')
+        self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        self.assertTrue(pr['body'].startswith(original + '\n\n'))
+        self.assertIn('https://github.com/peeweep-test/go-lib/pull/1', pr['body'])
+        self.assertIn('- peeweep-test/dde-api: 尚无发布 PR', pr['body'])
+        self.assertEqual(pr['body'].count(self.gh.ns['MEMBER_LINKS_START']), 1)
+        self.assertEqual(pr['body'].count(self.gh.ns['MEMBER_LINKS_END']), 1)
+
+    def test_links_only_include_this_round_and_reuse_member_pr_queries(self):
+        self.gh.start()
+        repo = 'peeweep-test/go-lib'
+        valid = self.gh.member_pr(repo)
+        invalid = [copy.deepcopy(valid) for _ in range(4)]
+        invalid[0]['created_at'] = '2000-01-01T00:00:00Z'
+        invalid[1]['head']['repo']['full_name'] = 'someone/go-lib'
+        invalid[2]['head']['repo'] = None
+        invalid[3]['head']['ref'] = 'automation/update-changelog/6.0.51'
+        for number, pr in enumerate(invalid, 2):
+            pr.update(number=number, html_url=f'https://github.com/{repo}/pull/{number}')
+        self.gh.member_prs[repo] = [*invalid, valid]
+        calls, original_api = [], self.gh.api
+        def recorded_api(url, *args, **kwargs):
+            calls.append(url)
+            return original_api(url, *args, **kwargs)
+        self.gh.ns['api'] = recorded_api
+        self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        description = self.gh.prs[0]['body']
+        self.assertIn(valid['html_url'], description)
+        for pr in invalid:
+            self.assertNotIn(pr['html_url'], description)
+        for member in (repo, 'peeweep-test/dde-api'):
+            self.assertEqual(sum(url.startswith(f'repos/{member}/pulls?') for url in calls), 1)
+
+    def test_closed_member_link_is_shown_while_readiness_still_fails(self):
+        self.gh.start()
+        member = self.gh.member_pr('peeweep-test/go-lib', pending=False)
+        with self.assertRaisesRegex(RuntimeError, '已关闭'):
+            self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        pr = self.gh.prs[0]
+        self.assertIn(member['html_url'], pr['body'])
+        self.assertTrue(pr['draft'])
+        self.assertEqual(self.gh.statuses[pr['head']['sha']][0]['state'], 'failure')
+
+    def test_member_link_query_failure_keeps_description_intact(self):
+        self.gh.start()
+        pr = self.gh.prs[0]
+        original_body, original_api = pr['body'], self.gh.api
+        def unavailable(url, *args, **kwargs):
+            if url.startswith('repos/peeweep-test/go-lib/pulls?'):
+                raise RuntimeError('member PR API unavailable')
+            return original_api(url, *args, **kwargs)
+        self.gh.ns['api'] = unavailable
+        with self.assertRaisesRegex(RuntimeError, 'member PR API unavailable'):
+            self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        self.assertEqual(pr['body'], original_body)
+        self.assertFalse(any(method == 'PATCH' for _, _, method in self.gh.writes))
+
+    def test_invalid_member_link_markers_do_not_overwrite_description(self):
+        self.gh.start()
+        pr = self.gh.prs[0]
+        start, end = self.gh.ns['MEMBER_LINKS_START'], self.gh.ns['MEMBER_LINKS_END']
+        before = len(self.gh.writes)
+        for description in (start, end, end + '\n人工说明\n' + start, start + end + start + end):
+            with self.subTest(description=description):
+                pr['body'] = description
+                with self.assertRaisesRegex(RuntimeError, '成员链接区块'):
+                    self.gh.ns['check'](self.gh.repo, pr, self.gh.release(), self.gh.cfg)
+                self.assertEqual(pr['body'], description)
+                self.assertEqual(len(self.gh.writes), before)
+
+    def test_resume_dry_run_does_not_publish_member_links(self):
+        self.gh.start()
+        self.gh.member_pr('peeweep-test/go-lib')
+        original_body, before = self.gh.prs[0]['body'], len(self.gh.writes)
+        self.assertEqual([m['repo'] for m in self.gh.start(dry_run=True)], ['peeweep-test/dde-api'])
+        self.assertEqual(self.gh.prs[0]['body'], original_body)
+        self.assertEqual(len(self.gh.writes), before)
 
     def test_closed_marker_cannot_get_success_status(self):
         self.gh.start()
