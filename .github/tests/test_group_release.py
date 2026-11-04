@@ -132,6 +132,8 @@ class GitHub:
             if 'head' in query:
                 branch = query['head'][0].split(':', 1)[1]
                 prs = [p for p in prs if p['head']['ref'] == branch]
+            if 'base' in query:
+                prs = [p for p in prs if p.get('base', {}).get('ref', 'master') == query['base'][0]]
             if query.get('state') == ['open']:
                 prs = [p for p in prs if p['state'] == 'open']
             return copy.deepcopy(prs)
@@ -142,8 +144,8 @@ class GitHub:
             return {'default_branch': 'master'}
         raise AssertionError((url, data, method))
 
-    def start(self, group='G2', version='6.0.50', dry_run=False):
-        return self.ns['start'](self.repo, 'master', self.refs['master'], copy.deepcopy(self.cfg), group, version, dry_run)
+    def start(self, group='G2', version='6.0.50', dry_run=False, **options):
+        return self.ns['start'](self.repo, 'master', self.refs['master'], copy.deepcopy(self.cfg), group, version, dry_run, **options)
 
     def release(self, group='G2'):
         pr = next(p for p in self.prs if p['head']['ref'] == f'baseline/{group}')
@@ -151,18 +153,22 @@ class GitHub:
 
     def member_pr(self, repo, merged=False, group='G2', pending=True):
         release = self.release(group)
+        base = next(m['base'] for m in release['members'] if m['repo'] == repo)
         branch = self.ns['member_branch'](group, release['version'])
         pr = {'number': 1, 'html_url': f'https://github.com/{repo}/pull/1',
               'created_at': '9999-01-01T00:00:00Z', 'state': 'closed' if merged or not pending else 'open',
               'merged_at': '9999-01-02T00:00:00Z' if merged else None, 'merge_commit_sha': 'member-merge',
-              'head': {'ref': branch, 'sha': 'member-head', 'repo': {'full_name': repo}}}
+              'head': {'ref': branch, 'sha': 'member-head', 'repo': {'full_name': repo}}, 'base': {'ref': base}}
         self.member_prs[repo] = [pr]
         pr['head']['sha'] = f"member-head-{release['version']}"
         pr['merge_commit_sha'] = f"member-merge-{release['version']}"
         self.versions[(repo, pr['head']['sha'])] = release['version']
         self.versions[(repo, pr['merge_commit_sha'])] = release['version']
         if merged:
-            self.live[repo] = release['version']
+            if base == 'master':
+                self.live[repo] = release['version']
+            else:
+                self.versions[(repo, base)] = release['version']
         return pr
 
     def merge(self, group='G2'):
@@ -200,6 +206,71 @@ class GroupReleaseTests(unittest.TestCase):
     def test_dry_run_does_not_write(self):
         self.assertEqual(len(self.gh.start(dry_run=True)), 2)
         self.assertEqual(self.gh.writes, [])
+
+    def test_changelog_without_pr_does_not_reserve_a_release(self):
+        self.assertEqual(len(self.gh.start(create_pr_enabled=False)), 2)
+        self.assertEqual(self.gh.writes, [])
+        self.assertNotIn('baseline/G2', self.gh.refs)
+        self.assertEqual(len(self.gh.start()), 2)
+
+    def test_selected_member_branch_is_used_for_checks_and_resume(self):
+        for repo in ('peeweep-test/go-lib', 'peeweep-test/dde-api'):
+            self.gh.live[repo] = '6.0.99'
+            self.gh.versions[(repo, 'release/stable')] = '6.0.49'
+        members = self.gh.start(member_base='release/stable')
+        self.assertEqual({m['base'] for m in members}, {'release/stable'})
+        self.assertEqual({m['default_branch'] for m in members}, {'master'})
+        self.gh.member_pr('peeweep-test/go-lib', merged=True)
+        self.gh.member_pr('peeweep-test/dde-api')
+        self.assertEqual(self.gh.start(), [])
+        self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        self.assertTrue(self.gh.prs[0]['draft'])
+        self.gh.member_pr('peeweep-test/dde-api', merged=True)
+        self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        self.assertFalse(self.gh.prs[0]['draft'])
+
+    def test_resume_cannot_change_member_branch(self):
+        self.gh.start(member_base='release/stable')
+        before = len(self.gh.writes)
+        with self.assertRaisesRegex(RuntimeError, '不能改变成员目标分支'):
+            self.gh.start(member_base='master')
+        self.assertEqual(before, len(self.gh.writes))
+        self.assertEqual({m['base'] for m in self.gh.start()}, {'release/stable'})
+
+    def test_selected_branch_target_must_exceed_its_current_version(self):
+        self.gh.versions[('peeweep-test/go-lib', 'release/stable')] = '6.0.50'
+        with self.assertRaisesRegex(RuntimeError, '实际版本'):
+            self.gh.start(member_base='release/stable')
+        self.assertEqual(self.gh.writes, [])
+
+    def test_selected_branch_preserves_default_branch_change_guard(self):
+        self.gh.start(member_base='release/stable')
+        original = self.gh.api
+        def changed_default(url, *args, **kwargs):
+            if url == 'repos/peeweep-test/go-lib':
+                return {'default_branch': 'new-default'}
+            return original(url, *args, **kwargs)
+        self.gh.ns['api'] = changed_default
+        before = len(self.gh.writes)
+        with self.assertRaisesRegex(RuntimeError, '默认分支已改变'):
+            self.gh.start()
+        self.assertEqual(before, len(self.gh.writes))
+
+    def test_legacy_release_record_without_default_branch_can_resume(self):
+        self.gh.start()
+        pr = self.gh.prs[0]
+        release = self.gh.release()
+        for member in release['members']:
+            member.pop('default_branch')
+        self.gh.commits[pr['head']['sha']]['message'] = self.gh.ns['MARKER'] + json.dumps(release) + '\n-->'
+        self.assertEqual(len(self.gh.start()), 2)
+
+    def test_g1_rejects_unsupported_changelog_options_before_reservation(self):
+        for options in ({'member_base': 'master'}, {'distribution': 'stable'}, {'create_pr_enabled': False}):
+            with self.subTest(options=options):
+                with self.assertRaisesRegex(RuntimeError, 'G1.*不支持'):
+                    self.gh.start('G1', '6.7.53', **options)
+                self.assertEqual(self.gh.writes, [])
 
     def test_first_release_unifies_mixed_versions_and_resumes(self):
         self.gh.cfg['groups']['G2']['members'].append('go-dbus-factory')
@@ -829,7 +900,14 @@ class GroupReleaseTests(unittest.TestCase):
         release = yaml.safe_load((ROOT / '.github/workflows/release-group.yml').read_text())
         self.assertEqual(release['jobs']['plan']['uses'], './.github/workflows/sync-baseline.yml')
         self.assertIn('inputs.group', release['concurrency']['group'])
-        self.assertEqual(set(release.get('on', release.get(True))['workflow_dispatch']['inputs']), {'group', 'version', 'dry_run'})
+        inputs = release.get('on', release.get(True))['workflow_dispatch']['inputs']
+        self.assertEqual(set(inputs), {'group', 'version', 'name', 'email', 'base_branch', 'distribution', 'create_pr', 'dry_run'})
+        self.assertTrue(inputs['name']['required'])
+        self.assertTrue(inputs['email']['required'])
+        self.assertTrue(inputs['create_pr']['default'])
+        for name in ('base_branch', 'distribution', 'create_pr'):
+            self.assertEqual(release['jobs']['plan']['with'][name], '${{ inputs.' + name + ' }}')
+            self.assertIn(name, WORKFLOW.get('on', WORKFLOW.get(True))['workflow_call']['inputs'])
         self.assertNotIn('${{', release['jobs']['dispatch']['steps'][-1]['run'])
         self.assertNotIn('actions/checkout', str(WORKFLOW))
 
@@ -845,6 +923,41 @@ class GroupReleaseTests(unittest.TestCase):
             self.assertLess(steps.index(token), steps.index(api_step))
             self.assertNotIn('if', token)
             self.assertEqual(api_step['env']['GH_TOKEN'], '${{ steps.app_token.outputs.token }}')
+
+
+class ReleaseDispatchTests(unittest.TestCase):
+    def dispatch(self, group, create_pr='true'):
+        release = yaml.safe_load((ROOT / '.github/workflows/release-group.yml').read_text())
+        step = release['jobs']['dispatch']['steps'][-1]
+        self.assertEqual(step['env']['MAINTAINER_NAME'], '${{ inputs.name }}')
+        self.assertEqual(step['env']['MAINTAINER_EMAIL'], '${{ inputs.email }}')
+        self.assertEqual(step['env']['DISTRIBUTION'], '${{ inputs.distribution }}')
+        self.assertEqual(step['env']['CREATE_PR'], '${{ inputs.create_pr }}')
+        with tempfile.TemporaryDirectory() as directory:
+            gh = Path(directory) / 'gh'
+            gh.write_text('#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+            gh.chmod(0o755)
+            env = {**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'],
+                   'GROUP': group, 'VERSION': '6.0.50', 'REPO': 'peeweep-test/go-lib',
+                   'BASE': 'release/stable', 'WORKFLOW': 'member-release.yml',
+                   'MAINTAINER_NAME': 'Release Maintainer $(printf injected)',
+                   'MAINTAINER_EMAIL': 'release+test@example.org', 'DISTRIBUTION': 'stable',
+                   'CREATE_PR': create_pr}
+            result = subprocess.run(['bash', '-c', step['run']], env=env, capture_output=True, text=True, check=True)
+            return json.loads(result.stdout.splitlines()[0])
+
+    def test_dispatch_forwards_changelog_options_without_shell_expansion(self):
+        self.assertEqual(self.dispatch('G2', create_pr='false'), [
+            'workflow', 'run', 'member-release.yml', '-R', 'peeweep-test/go-lib', '--ref', 'release/stable',
+            '-f', 'version=6.0.50', '-f', 'name=Release Maintainer $(printf injected)',
+            '-f', 'email=release+test@example.org', '-f', 'base_branch=release/stable',
+            '-f', 'distribution=stable', '-f', 'create_pr=false'])
+
+    def test_dispatch_g1_only_forwards_supported_inputs(self):
+        self.assertEqual(self.dispatch('G1'), [
+            'workflow', 'run', 'member-release.yml', '-R', 'peeweep-test/go-lib', '--ref', 'release/stable',
+            '-f', 'version=6.0.50', '-f', 'name=Release Maintainer $(printf injected)',
+            '-f', 'email=release+test@example.org', '-f', 'timezone=Asia/Shanghai'])
 
 
 if __name__ == '__main__':

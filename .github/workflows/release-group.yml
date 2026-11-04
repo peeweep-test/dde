@@ -13,6 +13,28 @@ on:
         description: 目标版本（相同目标可恢复未完成的发布）
         required: true
         type: string
+      name:
+        description: debian/changelog 中的维护者姓名
+        required: true
+        type: string
+      email:
+        description: debian/changelog 中的维护者邮箱
+        required: true
+        type: string
+      base_branch:
+        description: 成员目标分支（G2–G5；留空使用各成员默认分支，恢复时沿用原分支）
+        required: false
+        type: string
+      distribution:
+        description: Changelog 发行套件（G2–G5）
+        required: false
+        type: string
+        default: unstable
+      create_pr:
+        description: 创建发布 PR（G2–G5；取消勾选只生成成员 changelog）
+        required: false
+        type: boolean
+        default: true
       dry_run:
         description: 只检查并打印计划，不创建 PR 或派发
         required: false
@@ -33,6 +55,9 @@ jobs:
       group: ${{ inputs.group }}
       version: ${{ inputs.version }}
       dry_run: ${{ inputs.dry_run }}
+      base_branch: ${{ inputs.base_branch }}
+      distribution: ${{ inputs.distribution }}
+      create_pr: ${{ inputs.create_pr }}
     secrets:
       APP_ID: ${{ secrets.APP_ID }}
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
@@ -65,23 +90,29 @@ jobs:
           REPO: ${{ matrix.member.repo }}
           BASE: ${{ matrix.member.base }}
           WORKFLOW: ${{ matrix.member.workflow }}
-          ACTOR: ${{ github.actor }}
-          EMAIL: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
+          MAINTAINER_NAME: ${{ inputs.name }}
+          MAINTAINER_EMAIL: ${{ inputs.email }}
+          DISTRIBUTION: ${{ inputs.distribution }}
+          CREATE_PR: ${{ inputs.create_pr }}
         run: |
           set -euo pipefail
           if [ "$GROUP" = "G1" ]; then
             gh workflow run "$WORKFLOW" -R "$REPO" --ref "$BASE" \
               -f version="$VERSION" \
-              -f name="$ACTOR" \
-              -f email="$EMAIL" \
+              -f name="$MAINTAINER_NAME" \
+              -f email="$MAINTAINER_EMAIL" \
               -f timezone=Asia/Shanghai
           else
             gh workflow run "$WORKFLOW" -R "$REPO" --ref "$BASE" \
               -f version="$VERSION" \
-              -f name="$ACTOR" \
-              -f email="$EMAIL" \
+              -f name="$MAINTAINER_NAME" \
+              -f email="$MAINTAINER_EMAIL" \
               -f base_branch="$BASE" \
-              -f distribution=unstable \
-              -f create_pr=true
+              -f distribution="$DISTRIBUTION" \
+              -f create_pr="$CREATE_PR"
           fi
-          echo "已触发 $REPO -> $VERSION；成员执行结果见基线 PR"
+          if [ "$CREATE_PR" = "true" ]; then
+            echo "已触发 $REPO -> $VERSION；成员执行结果见基线 PR"
+          else
+            echo "已触发 $REPO -> $VERSION；生成的 changelog 见成员 Actions 的 diff 和产物"
+          fi
