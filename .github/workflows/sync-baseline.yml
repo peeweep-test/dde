@@ -243,10 +243,10 @@ jobs:
 
           def member_prs(release, member):
               repo = member["repo"]
-              query = urlencode({"state": "all", "head": f"{repo.split('/')[0]}:{member_branch(release['group'], release['version'])}",
-                                 "base": member["base"], "per_page": 100})
+              branch = member_branch(release["group"], release["version"])
+              query = urlencode({"state": "all", "base": member["base"], "per_page": 100})
               prs = api(f"repos/{repo}/pulls?{query}", paginate=True)
-              return [p for p in prs if p["created_at"] >= release["started_at"]
+              return [p for p in prs if p["head"]["ref"] == branch and p["created_at"] >= release["started_at"]
                       and p["head"]["repo"] and p["head"]["repo"]["full_name"] == repo]
 
           def member_state(release, member, live_required=True, prs=None):
