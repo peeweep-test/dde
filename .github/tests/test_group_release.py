@@ -558,11 +558,23 @@ class GroupReleaseTests(unittest.TestCase):
         self.assertTrue(pr['body'].endswith(suffix))
         for repo in ('peeweep-test/go-lib', 'peeweep-test/dde-api'):
             self.assertIn(f'[#1](https://github.com/{repo}/pull/1)', pr['body'])
+        self.assertIn('[#1](https://github.com/peeweep-test/go-lib/pull/1)（已合并）', pr['body'])
+        self.assertIn('[#1](https://github.com/peeweep-test/dde-api/pull/1)（待合并）', pr['body'])
         self.assertTrue(pr['draft'])
         self.assertEqual(self.gh.cfg['groups']['G2']['version'], '6.0.49')
         self.event(pr)
         edits = [data for _, data, method in self.gh.writes if method == 'PATCH' and 'body' in data]
         self.assertEqual(edits, [{'body': pr['body']}])
+        self.gh.member_pr('peeweep-test/dde-api', merged=True)
+        self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        self.assertIn('[#1](https://github.com/peeweep-test/dde-api/pull/1)（已合并）', pr['body'])
+        self.assertNotIn('待合并', pr['body'])
+        self.assertTrue(pr['body'].startswith(prefix))
+        self.assertTrue(pr['body'].endswith(suffix))
+        self.assertFalse(pr['draft'])
+        self.assertEqual(self.gh.statuses[pr['head']['sha']][0]['state'], 'success')
+        edits = [data for _, data, method in self.gh.writes if method == 'PATCH' and 'body' in data]
+        self.assertEqual(len(edits), 2)
 
     def test_legacy_baseline_description_gets_links_without_losing_notes(self):
         self.gh.start()
@@ -612,6 +624,7 @@ class GroupReleaseTests(unittest.TestCase):
             self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
         pr = self.gh.prs[0]
         self.assertIn(member['html_url'], pr['body'])
+        self.assertIn(f"[#1]({member['html_url']})（已关闭，未合并）", pr['body'])
         self.assertTrue(pr['draft'])
         self.assertEqual(self.gh.statuses[pr['head']['sha']][0]['state'], 'failure')
 

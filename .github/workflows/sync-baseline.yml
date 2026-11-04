@@ -317,8 +317,11 @@ jobs:
           def member_links(release, prs):
               lines = [MEMBER_LINKS_START, "### 成员发布 PR", ""]
               for member in release["members"]:
-                  links = "、".join(f"[#{p['number']}]({p['html_url']})" for p in prs.get(member["repo"], []))
-                  lines.append(f"- {member['repo']}: {links or '尚无发布 PR'}")
+                  links = []
+                  for p in prs.get(member["repo"], []):
+                      state = "已合并" if p["merged_at"] else "待合并" if p["state"] == "open" else "已关闭，未合并"
+                      links.append(f"[#{p['number']}]({p['html_url']})（{state}）")
+                  lines.append(f"- {member['repo']}: {'、'.join(links) or '尚无发布 PR'}")
               return "\n".join([*lines, MEMBER_LINKS_END])
 
           def update_member_links(repo, pr, release, prs):
