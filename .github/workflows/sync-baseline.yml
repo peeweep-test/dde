@@ -42,6 +42,7 @@ permissions:
 
 jobs:
   coordinate:
+    if: ${{ github.event_name != 'pull_request_target' || github.event.pull_request.base.ref != 'test/epoch-validation-20261105-061858' }}
     name: Coordinate group release
     runs-on: ubuntu-latest
     concurrency:
