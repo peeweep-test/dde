@@ -16,7 +16,7 @@ repo_overrides:
 groups:
   G1:
     name: DTK 基础库
-    version: "6.7.52"
+    version: "6.7.53"
     members:
       - dtkcommon
       - dtk6log
