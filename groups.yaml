@@ -1,6 +1,6 @@
 groups:
   G3:
-    version: "6.1.113"
+    version: "6.1.116"
     members:
       - dde-clipboard
       - dde-services
