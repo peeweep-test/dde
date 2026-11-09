@@ -51,7 +51,17 @@ class GitHub:
 
     def content(self, repo, path, sha):
         if path.startswith('.github/workflows/'):
-            text = self.workflow_files.get((repo, path, sha), 'on:\n  workflow_dispatch:\n')
+            text = self.workflow_files.get((repo, path, sha), '''on:
+  workflow_dispatch:
+    inputs:
+      version: {type: string}
+      name: {type: string}
+      email: {type: string}
+      base_branch: {type: string}
+      distribution: {type: string}
+      create_pr: {type: boolean}
+      timezone: {type: string}
+''')
             if text is None:
                 raise RuntimeError(f'{repo}@{sha} 缺少成员工作流 (HTTP 404)')
             return text
@@ -462,12 +472,35 @@ class GroupReleaseTests(unittest.TestCase):
                         gh.start(member_base='release/stable')
                     self.assertEqual(gh.writes, [])
 
-    def test_workflow_dispatch_shorthand_is_supported(self):
+    def test_workflow_dispatch_without_required_inputs_is_rejected(self):
         for text in ('on: workflow_dispatch\n', 'on: [push, workflow_dispatch]\n'):
             with self.subTest(text=text):
                 gh = GitHub()
                 gh.workflow_files[('linuxdeepin/go-lib', '.github/workflows/call-update-changelog.yml', 'master')] = text
-                self.assertEqual(len(gh.start(dry_run=True)), 2)
+                with self.assertRaisesRegex(RuntimeError, '输入不兼容'):
+                    gh.start(dry_run=True)
+                self.assertEqual(gh.writes, [])
+
+    def test_workflow_dispatch_missing_or_wrong_input_is_rejected_before_reservation(self):
+        cases = (
+            ('G2', 'linuxdeepin/go-lib', 'distribution', None),
+            ('G2', 'linuxdeepin/go-lib', 'create_pr', 'string'),
+            ('G1', 'linuxdeepin/dtkcore', 'timezone', None),
+        )
+        for group, repo, name, kind in cases:
+            with self.subTest(group=group, input=name):
+                gh = GitHub()
+                workflow_name = gh.ns['workflow'](group, repo)
+                document = yaml.safe_load(gh.content(repo, f'.github/workflows/{workflow_name}', 'master'))
+                events = document.get('on', document.get(True))
+                if kind is None:
+                    del events['workflow_dispatch']['inputs'][name]
+                else:
+                    events['workflow_dispatch']['inputs'][name]['type'] = kind
+                gh.workflow_files[(repo, f'.github/workflows/{workflow_name}', 'master')] = yaml.safe_dump(document)
+                target = '6.7.53' if group == 'G1' else '6.0.50'
+                with self.assertRaisesRegex(RuntimeError, '输入不兼容'):
+                    gh.start(group, target)
                 self.assertEqual(gh.writes, [])
 
     def test_epoch_drift_is_blocked_after_release_completion(self):

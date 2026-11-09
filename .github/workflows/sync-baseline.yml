@@ -448,11 +448,24 @@ jobs:
                       raise RuntimeError(f"{name} 的 {member['workflow']} 未启用")
                   for branch in dict.fromkeys((member["default_branch"], member["base"])):
                       document = yaml.safe_load(content(name, f".github/workflows/{member['workflow']}", branch))
-                      events = document.get("on", document.get(True))
-                      if isinstance(events, str):
-                          events = [events]
+                      workflow_doc = document.get("on", document.get(True))
+                      events = [workflow_doc] if isinstance(workflow_doc, str) else (workflow_doc or [])
                       if not events or "workflow_dispatch" not in events:
                           raise RuntimeError(f"{name}@{branch} 的 {member['workflow']} 不支持 workflow_dispatch")
+                      required_inputs = (
+                          {"version": "string", "name": "string", "email": "string", "timezone": "string"}
+                          if group == "G1" else
+                          {"version": "string", "name": "string", "email": "string", "base_branch": "string",
+                           "distribution": "string", "create_pr": "boolean"})
+                      dispatch = workflow_doc.get("workflow_dispatch") if isinstance(workflow_doc, dict) else None
+                      configured = (dispatch.get("inputs") or {}) if isinstance(dispatch, dict) else {}
+                      missing = sorted(set(required_inputs) - set(configured))
+                      wrong_type = sorted(key for key, kind in required_inputs.items()
+                                          if key in configured and configured[key].get("type", "string") != kind)
+                      if missing or wrong_type:
+                          raise RuntimeError(
+                              f"{name}@{branch} 的 {member['workflow']} 输入不兼容: "
+                              f"缺少 {missing or '无'}，类型不符 {wrong_type or '无'}")
                   actual = head_version(name, member["base"])
                   if release:
                       previous = next(m for m in release["members"] if m["repo"] == name)
