@@ -10,75 +10,18 @@
 #
 # 基线 PR 的 group-release-ready 检查确认整组完成；组件侧校验尚未接入。
 
-# 目录名与 GitHub 仓库名不一致的成员
-repo_overrides:
-  dde-session-shell-v25: dde-session-shell-snipe
-  qt5platform-plugins: dde-qtplatform-plugins
-  qt5integration: dde-qtintegration
+repo_overrides: {}
 
 groups:
   G1:
-    name: DTK 基础库
+    name: Validation G1
     version: "6.7.52"
     members:
-      - dtkcommon
-      - dtklog
       - dtkcore
-      - dtkgui
-      - dtkwidget
-      - dtkdeclarative
-      - qt5platform-plugins
-      - qt5integration
 
   G2:
-    name: Go 服务基座
-    version: "6.0.49"
+    name: Validation G2
+    version: "6.0.50"
     members:
       - go-lib
       - go-dbus-factory
-      - dde-api
-
-  # 会话核心与桌面应用统一为 G3：
-  # 桌面应用与 UI 运行时/构建期依赖会话核心，ABI 变化需要一起重编。
-  G3:
-    name: 会话核心与桌面应用
-    version: "6.1.113"
-    members:
-      - dde-daemon
-      - dde-services
-      - dde-session
-      - dde-session-shell-v25
-      - dde-polkit-agent
-      - dde-session-ui
-      - dde-shell
-      - dde-tray-loader
-      - dde-application-manager
-      - deepin-service-manager
-      - dde-control-center
-      - dde-launchpad
-      - dde-clipboard
-      - dde-network-core
-      - deepin-update-ui
-      - dcc-insider-plugin
-      - xdg-desktop-portal-dde
-      - deepin-pw-check
-      - dde-app-services
-
-  G4:
-    name: 外观与主题
-    version: "6.5.12"
-    members:
-      - dde-appearance
-      - deepin-desktop-theme
-      - deepin-face
-      - deepin-screensaver
-
-  # 单成员组：日期版本，独立成线，不并入 G4
-  G5:
-    name: 图标主题
-    version: "2026.02.27"
-    members:
-      - deepin-icon-theme
-
-# G6 独立组件不参与统一，故不列入：
-#   dde-dialog / dde-manual-content / gnome-keyring

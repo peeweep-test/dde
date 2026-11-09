@@ -158,7 +158,7 @@ jobs:
 
           def repo_names(cfg, group):
               overrides = cfg.get("repo_overrides", {})
-              return [f"linuxdeepin/{overrides.get(m, m)}" for m in cfg["groups"][group]["members"]]
+              return [f"peeweep-test/{overrides.get(m, m)}" for m in cfg["groups"][group]["members"]]
 
           def workflow(group, repo):
               if group != "G1":
@@ -291,7 +291,7 @@ jobs:
                               prs[m["repo"]] if prs is not None else None), release["members"])
 
           def active(repo, base, cfg, group):
-              branch = f"baseline/{group}"
+              branch = f"validation-20261109/{group}"
               pr, reservation = latest(repo, branch, base), ref(repo, branch)
               if not pr and not reservation:
                   return None, None, None
@@ -389,7 +389,7 @@ jobs:
                   raise RuntimeError("G1 的 Auto Release 不支持 base_branch、distribution 或 create_pr=false")
               dry_run = dry_run or not create_pr_enabled
               validate_version(group, target)
-              branch = f"baseline/{group}"
+              branch = f"validation-20261109/{group}"
               pr, reservation, release = active(repo, base, cfg, group)
               if (group == "G1" and "-" in target.split("+", 1)[0]
                       and not (release and target == release["version"])):
@@ -431,7 +431,7 @@ jobs:
                   raise RuntimeError(f"{target} 必须大于 {group} 基线 {current}")
               query = urlencode({"state": "open", "per_page": 100})
               for old in api(f"repos/{repo}/pulls?{query}", paginate=True):
-                  if old["head"]["ref"].startswith("baseline/") and old["head"]["ref"] != branch:
+                  if old["head"]["ref"].startswith("validation-20261109/") and old["head"]["ref"] != branch:
                       old_cfg = config(old["head"]["repo"]["full_name"], old["head"]["sha"])
                       comparison = api(f"repos/{repo}/compare/{old['base']['sha']}...{old['head']['sha']}")
                       old_base = config(repo, comparison["merge_base_commit"]["sha"])
@@ -495,7 +495,7 @@ jobs:
               for group in cfg["groups"]:
                   pr = None
                   try:
-                      branch = f"baseline/{group}"
+                      branch = f"validation-20261109/{group}"
                       pr, reservation, release = active(repo, base, cfg, group)
                       if not pr:
                           if reservation:
@@ -542,8 +542,8 @@ jobs:
                           event = json.load(f)
                       pr = api(f"repos/{repo}/pulls/{event['number']}")
                       try:
-                          if pr["head"]["ref"].startswith("baseline/"):
-                              pr_group = pr["head"]["ref"].removeprefix("baseline/")
+                          if pr["head"]["ref"].startswith("validation-20261109/"):
+                              pr_group = pr["head"]["ref"].removeprefix("validation-20261109/")
                               if pr_group not in cfg["groups"] or pr["head"]["repo"]["full_name"] != repo:
                                   raise RuntimeError("旧基线 PR 或外部发布分支，需先人工核实")
                               release = record(repo, pr["head"]["sha"], pr_group)
