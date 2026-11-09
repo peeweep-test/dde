@@ -25,3 +25,10 @@ groups:
     members:
       - go-lib
       - go-dbus-factory
+
+  G3:
+    name: Validation input preflight
+    version: "6.0.50"
+    members:
+      - go-lib
+      - go-dbus-factory
