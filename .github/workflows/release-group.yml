@@ -10,7 +10,7 @@ on:
         type: choice
         options: [G1, G2, G3, G4, G5]
       version:
-        description: 目标版本（相同目标可恢复未完成的发布）
+        description: 组目标版本（新发布不带 epoch；相同目标可恢复原发布）
         required: true
         type: string
       name:
@@ -86,7 +86,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GROUP: ${{ inputs.group }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ matrix.member.version || inputs.version }}
           REPO: ${{ matrix.member.repo }}
           BASE: ${{ matrix.member.base }}
           WORKFLOW: ${{ matrix.member.workflow }}

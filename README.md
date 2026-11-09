@@ -6,7 +6,8 @@
 
 ## 版本规则
 
-- 每轮发布完成后，同组所有仓库的 `debian/changelog` 版本须与 `groups.yaml` 中该组的 `version` 一致。
+- 组基线 `version` 不带 epoch；每轮发布完成后，成员 `debian/changelog` 去掉 epoch 的版本须与组基线一致。
+- G2–G5 保留各成员现有 epoch。例如组目标 `6.1.114` 会将 dde-clipboard 的 `1:6.1.37` 更新为 `1:6.1.114`，其他无 epoch 成员更新为 `6.1.114`，无需更名。
 - 组内任一仓库有更新，整组一起升版本、重新打包。
 - 统一发版沿用 `debian/control` 中现有的依赖下界，不修改 `>=` / `>>` 约束。
 
@@ -21,15 +22,15 @@
 整组发版从本仓库发起，由各成员工作流更新 changelog。不要单独到成员仓库修改版本。
 
 首次统一也从 `Release group` 发起，不需要先运行 `Sync baseline`。本组没有统一发布记录时，成员起始版本可以不同。
-首轮发布完成后，后续发布要求成员版本与基线一致。
+首轮发布完成后，后续发布要求成员完整版本与上轮记录的成员目标一致，包括 epoch。
 
 打开 `Actions → Release group → Run workflow`，填写以下参数：
 
 - `group`：要发布的组。
-- `version`：目标版本，须高于基线和成员当前版本。继续未完成的发布时，填写原目标版本。
+- `version`：不带 epoch 的组目标版本，须高于基线；继承 epoch 后的各成员目标须高于其当前完整版本。继续未完成的发布时，填写原组目标版本。G1 新发布只接受正式三段版本，不支持 `-rc` 等预发布版本。
 - `name` / `email`：写入成员 `debian/changelog` 的维护者姓名和邮箱，必填。
 - `base_branch`：G2–G5 的成员目标分支；留空使用各成员默认分支。所填分支须在所有成员中存在并接入调用工作流。
-- `distribution`：G2–G5 的 changelog 发行套件，默认 `unstable`。
+- `distribution`：G2–G5 的 changelog 发行套件，默认 `unstable`。新发布记录会固定该值，恢复时须沿用。
 - `create_pr`：默认 `true`。G2–G5 取消勾选后只生成成员 changelog，在成员 Actions 中显示 diff 并上传产物，不创建本轮基线分支或任何发布 PR。
 - `dry_run`：默认 `true`，检查当前状态并列出需要触发的成员；设为 `false` 后才创建 PR、触发工作流。
 
@@ -38,10 +39,10 @@ G1 的 Auto Release 支持 `name` / `email`，使用默认分支及原有发布�
 
 新一轮发布在 `create_pr=true` 时按以下顺序执行：
 
-1. 检查目标版本和已有发布记录，确认本组没有未完成的发布。已有统一发布记录的组，还须确认成员当前版本与基线一致。
-2. 创建 `baseline/<组>` 分支和草稿 PR，只修改本组的版本。新基线随该 PR 合入默认分支后生效。
-3. 并行触发成员工作流，由各仓库生成 changelog 并创建发布 PR。
-4. 所有成员 PR 合并、changelog 版本均为目标版本后，`group-release-ready` 检查通过，基线草稿 PR 转为待审。
+1. 检查目标版本和已有发布记录，确认本组没有未完成的发布。已有统一发布记录的组，还须确认成员当前完整版本与上轮成员目标一致。
+2. 创建 `baseline/<组>` 分支和草稿 PR，只修改本组的版本，并在原始发布提交中固定各成员继承 epoch 后的完整目标。新基线随该 PR 合入默认分支后生效。
+3. 按记录中的完整目标并行触发成员工作流，由各仓库生成 changelog 并创建发布 PR。
+4. 所有成员 PR 合并、changelog 完整版本均为各自记录的目标后，`group-release-ready` 检查通过，基线草稿 PR 转为待审。
 5. 人工审查并合并基线 PR，完成本轮发布，之后才能开始下一轮。
 
 同一组一次只能发布一个目标版本，不同组可以同时发布。成员陆续合入时，组内版本可能暂时不同。
@@ -90,6 +91,10 @@ G1 的 Auto Release 支持 `name` / `email`，使用默认分支及原有发布�
 已有成员合入时，应继续完成原目标。基线 PR 若被提前合入，需要先人工完成原成员 PR；流程不会自动回退基线，
 也不会再次触发成员工作流，完成前不能开始下一轮。
 
+恢复时沿用记录中的完整成员版本，不重新推导 epoch。旧发布记录没有成员版本字段时，继续使用原组目标，
+包括旧记录已有的 epoch；不会改变正在进行的发布目标。
+旧轮完成后，新轮按去掉 epoch 的组基线判断升版，新基线写入不带 epoch 的组目标，成员继续继承原 epoch。
+
 ## 配置与上线
 
 沿用组织的 `APP_ID` 和 `APP_PRIVATE_KEY`，并允许 dde 仓库访问这两个 Secret。
@@ -102,6 +107,7 @@ GitHub App 须安装到 dde 和各成员仓库，并授予以下仓库权限：
 
 成员仓库创建 changelog PR 所用的 GitHub App secret 沿用现有工作流配置。
 本仓库各 job 单独生成 GitHub App 安装 Token，结束后自动撤销；派发 job 的 Token 只访问对应成员仓库。
+共享成员发版工作流创建 PR 时的 Token 也只访问当前成员仓库。
 认证或查询失败时，运行会直接停止。
 
 给 dde 默认分支启用保护规则，把 **`group-release-ready`** 设为必需检查，并禁止绕过。
@@ -112,6 +118,7 @@ GitHub App 须安装到 dde 和各成员仓库，并授予以下仓库权限：
 
 首次使用前，先等待成员仓库已有的发版工作流结束，处理现有成员 PR、旧格式的 `baseline/<组>-<版本>` PR
 和一次修改多组的基线 PR。确认成员默认分支已接入对应工作流；go-lib 的 `call-update-changelog.yml` 需先合入其默认分支。
+创建基线前会检查成员是否归档或禁用、发版工作流是否启用，以及默认分支和所选目标分支的入口是否支持 `workflow_dispatch`。
 
 ## 本地测试
 
@@ -122,10 +129,10 @@ python3 -I .github/tests/test_group_release.py -v
 ## 组件侧校验
 
 成员通过 `linuxdeepin/.github` 的 `verify-group-version.yml` 校验 `debian/changelog` 版本，
-调用入口为 `workflow-templates/call-verify-group-version.yml`。模板同步配置覆盖全部 36 个成员；
+调用入口为 `workflow-templates/call-verify-group-version.yml`。模板同步配置覆盖全部 35 个成员；
 成员默认分支接入入口、启用分支保护后才会阻止合并。
 
-不改 changelog 版本的普通 PR 可以通过。改版 PR 的目标版本、来源仓库、自动化分支、目标分支和
+不改 changelog 版本的普通 PR 可以通过。改版 PR 的完整成员目标版本、来源仓库、自动化分支、目标分支和
 创建时间须匹配本仓库的原始发布记录；首次统一允许成员起始版本不同。未发起组发布的改版 PR 会失败，
 本轮发布 `6.0.50` 时单独改成 `6.0.51` 也会失败。关闭基线 PR 不取消原发布，原目标的成员 PR 可继续完成。
 
@@ -135,7 +142,8 @@ python3 -I .github/tests/test_group_release.py -v
 
 部署前先完成上述首用准备及本仓库发布协调器的上线，再在共享仓库合入校验工作流和模板配置，
 待成员入口接入并验证检查后启用保护。测试 fork 会自动读取同组织的 `dde` 发布记录。
-go-lib 的发布入口、dde-clipboard 的包名及 epoch 迁移须先合入各自默认分支，以免首用迁移被新检查拦截。
+go-lib 的发布入口须先合入其默认分支。dde-clipboard 保留原包名与 epoch；带 epoch 的新一轮发布须等
+协调器与成员校验工作流均更新后再触发。
 
 ## 分组
 
@@ -143,7 +151,7 @@ go-lib 的发布入口、dde-clipboard 的包名及 epoch 迁移须先合入各�
 
 | 组 | 说明 | 成员 |
 |---|---|---|
-| G1 | DTK 基础库 | dtkcommon、dtk6log、dtklog、dtkcore、dtkgui、dtkwidget、dtkdeclarative、qt5platform-plugins、qt5integration |
+| G1 | DTK 基础库 | dtkcommon、dtklog、dtkcore、dtkgui、dtkwidget、dtkdeclarative、qt5platform-plugins、qt5integration |
 | G2 | Go 服务基座 | go-lib、go-dbus-factory、dde-api |
 | G3 | 会话核心与桌面应用 | dde-daemon、dde-services、dde-session、dde-session-shell-v25、dde-polkit-agent、dde-session-ui、dde-shell、dde-tray-loader、dde-application-manager、deepin-service-manager、dde-control-center、dde-launchpad、dde-clipboard、dde-network-core、deepin-update-ui、dcc-insider-plugin、xdg-desktop-portal-dde、deepin-pw-check、dde-app-services |
 | G4 | 外观与主题 | dde-appearance、deepin-desktop-theme、deepin-face、deepin-screensaver |
@@ -152,5 +160,6 @@ go-lib 的发布入口、dde-clipboard 的包名及 epoch 迁移须先合入各�
 deepin-pw-check 的密码库由控制中心和会话 UI 链接使用；dde-app-services 提供桌面配置服务，两者随 G3 一起交付。
 
 dde-dialog、dde-manual-content、gnome-keyring 不参与组版本统一，保留各自的版本。
+dtk6log 已归档，不参与组发布。
 
 具体成员和版本以 [groups.yaml](./groups.yaml) 为准。

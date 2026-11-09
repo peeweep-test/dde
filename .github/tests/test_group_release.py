@@ -24,6 +24,7 @@ class GitHub:
         self.cfg = {'groups': {
             'G1': {'version': '6.7.52', 'members': ['dtkcore']},
             'G2': {'version': '6.0.49', 'members': ['go-lib', 'dde-api']},
+            'G3': {'version': '6.1.113', 'members': ['dde-daemon', 'dde-clipboard']},
             'G5': {'version': '2026.02.27', 'members': ['deepin-icon-theme']},
         }}
         self.configs = {'base': copy.deepcopy(self.cfg)}
@@ -34,6 +35,8 @@ class GitHub:
         self.versions = {}
         self.live = {f'linuxdeepin/{m}': g['version'] for g in self.cfg['groups'].values() for m in g['members']}
         self.runs = {}
+        self.workflow_info = {}
+        self.workflow_files = {}
         self.writes = []
         self.statuses = {}
         self.serial = 0
@@ -47,6 +50,11 @@ class GitHub:
         return copy.deepcopy(self.configs[sha])
 
     def content(self, repo, path, sha):
+        if path.startswith('.github/workflows/'):
+            text = self.workflow_files.get((repo, path, sha), 'on:\n  workflow_dispatch:\n')
+            if text is None:
+                raise RuntimeError(f'{repo}@{sha} 缺少成员工作流 (HTTP 404)')
+            return text
         return yaml.safe_dump(self.configs[sha], sort_keys=False)
 
     def head_version(self, repo, ref):
@@ -138,8 +146,13 @@ class GitHub:
                 prs = [p for p in prs if p['state'] == 'open']
             return copy.deepcopy(prs)
         if '/actions/workflows/' in path:
-            repo = path.removeprefix('repos/').split('/actions/', 1)[0]
-            return {'workflow_runs': self.runs.get(repo, [])}
+            repo, workflow = path.removeprefix('repos/').split('/actions/workflows/', 1)
+            if workflow.endswith('/runs'):
+                return {'workflow_runs': self.runs.get(repo, [])}
+            info = self.workflow_info.get((repo, workflow), {'state': 'active'})
+            if info is None:
+                raise RuntimeError(f'{repo} 缺少成员工作流 (HTTP 404)')
+            return copy.deepcopy(info)
         if path.startswith('repos/') and path.count('/') == 2:
             return {'default_branch': 'master'}
         raise AssertionError((url, data, method))
@@ -153,22 +166,24 @@ class GitHub:
 
     def member_pr(self, repo, merged=False, group='G2', pending=True):
         release = self.release(group)
-        base = next(m['base'] for m in release['members'] if m['repo'] == repo)
-        branch = self.ns['member_branch'](group, release['version'])
+        member = next(m for m in release['members'] if m['repo'] == repo)
+        base = member['base']
+        target = member.get('version', release['version'])
+        branch = self.ns['member_branch'](group, target)
         pr = {'number': 1, 'html_url': f'https://github.com/{repo}/pull/1',
               'created_at': '9999-01-01T00:00:00Z', 'state': 'closed' if merged or not pending else 'open',
               'merged_at': '9999-01-02T00:00:00Z' if merged else None, 'merge_commit_sha': 'member-merge',
               'head': {'ref': branch, 'sha': 'member-head', 'repo': {'full_name': repo}}, 'base': {'ref': base}}
         self.member_prs[repo] = [pr]
-        pr['head']['sha'] = f"member-head-{release['version']}"
-        pr['merge_commit_sha'] = f"member-merge-{release['version']}"
-        self.versions[(repo, pr['head']['sha'])] = release['version']
-        self.versions[(repo, pr['merge_commit_sha'])] = release['version']
+        pr['head']['sha'] = f"member-head-{target}"
+        pr['merge_commit_sha'] = f"member-merge-{target}"
+        self.versions[(repo, pr['head']['sha'])] = target
+        self.versions[(repo, pr['merge_commit_sha'])] = target
         if merged:
             if base == 'master':
-                self.live[repo] = release['version']
+                self.live[repo] = target
             else:
-                self.versions[(repo, base)] = release['version']
+                self.versions[(repo, base)] = target
         return pr
 
     def merge(self, group='G2'):
@@ -236,6 +251,17 @@ class GroupReleaseTests(unittest.TestCase):
             self.gh.start(member_base='master')
         self.assertEqual(before, len(self.gh.writes))
         self.assertEqual({m['base'] for m in self.gh.start()}, {'release/stable'})
+
+    def test_resume_cannot_change_distribution(self):
+        self.gh.start(distribution='stable')
+        self.assertEqual(self.gh.release()['distribution'], 'stable')
+        self.gh.member_pr('linuxdeepin/go-lib', merged=True)
+        before = len(self.gh.writes)
+        with self.assertRaisesRegex(RuntimeError, '不能改变发行套件'):
+            self.gh.start(distribution='unstable')
+        self.assertEqual(before, len(self.gh.writes))
+        self.assertEqual([m['repo'] for m in self.gh.start(distribution='stable')],
+                         ['linuxdeepin/dde-api'])
 
     def test_selected_branch_target_must_exceed_its_current_version(self):
         self.gh.versions[('linuxdeepin/go-lib', 'release/stable')] = '6.0.50'
@@ -310,6 +336,218 @@ class GroupReleaseTests(unittest.TestCase):
         self.gh.live['linuxdeepin/go-lib'] = '6.0.51'
         self.assertEqual(len(self.gh.start(version='6.0.52', dry_run=True)), 2)
         self.assertEqual(self.gh.writes, [])
+
+    def test_first_release_freezes_each_members_epoch_version(self):
+        self.gh.live['linuxdeepin/dde-clipboard'] = '1:6.1.37'
+        expected = {'linuxdeepin/dde-daemon': '6.1.114',
+                    'linuxdeepin/dde-clipboard': '1:6.1.114'}
+        planned = self.gh.start('G3', '6.1.114', dry_run=True)
+        self.assertEqual({m['repo']: m['version'] for m in planned}, expected)
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.start('G3', '6.1.114'), planned)
+        release = self.gh.release('G3')
+        self.assertEqual(release['members'], planned)
+        self.assertEqual(release['version'], '6.1.114')
+        self.assertEqual(self.gh.configs[self.gh.prs[0]['head']['sha']]['groups']['G3']['version'], '6.1.114')
+
+    def test_epoch_release_resumes_and_completes_with_frozen_targets(self):
+        clipboard = 'linuxdeepin/dde-clipboard'
+        self.gh.live[clipboard] = '1:6.1.37'
+        self.gh.start('G3', '6.1.114')
+        self.gh.live[clipboard] = '6.1.37'
+        resumed = self.gh.start('G3', '6.1.114', dry_run=True)
+        self.assertEqual(next(m['version'] for m in resumed if m['repo'] == clipboard), '1:6.1.114')
+        self.gh.live[clipboard] = '1:6.1.37'
+        self.gh.member_pr('linuxdeepin/dde-daemon', merged=True, group='G3')
+        member_pr = self.gh.member_pr(clipboard, group='G3')
+        self.assertEqual(member_pr['head']['ref'], 'automation/update-changelog/1-6.1.114')
+        self.assertEqual(self.gh.start('G3', '6.1.114'), [])
+        self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        baseline = self.gh.prs[0]
+        self.assertTrue(baseline['draft'])
+        self.assertEqual(self.gh.statuses[baseline['head']['sha']][0]['state'], 'pending')
+        self.assertIn(member_pr['html_url'], baseline['body'])
+        self.gh.member_pr(clipboard, merged=True, group='G3')
+        self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        self.assertFalse(baseline['draft'])
+        self.assertEqual(self.gh.statuses[baseline['head']['sha']][0]['state'], 'success')
+        self.gh.merge('G3')
+        self.assertEqual(self.gh.cfg['groups']['G3']['version'], '6.1.114')
+        next_members = self.gh.start('G3', '6.1.115', dry_run=True)
+        self.assertEqual({m['repo']: m['version'] for m in next_members},
+                         {'linuxdeepin/dde-daemon': '6.1.115', clipboard: '1:6.1.115'})
+
+    def test_first_epoch_target_must_exceed_full_member_version(self):
+        for actual in ('1:6.1.114', '2:6.1.115'):
+            with self.subTest(actual=actual):
+                gh = GitHub()
+                gh.live['linuxdeepin/dde-clipboard'] = actual
+                with self.assertRaisesRegex(RuntimeError, '必须大于.*实际版本'):
+                    gh.start('G3', '6.1.114')
+                self.assertEqual(gh.writes, [])
+
+    def test_new_group_target_cannot_contain_epoch(self):
+        with self.assertRaisesRegex(RuntimeError, '组目标版本不能包含 epoch'):
+            self.gh.start('G3', '1:6.1.114')
+        self.assertEqual(self.gh.writes, [])
+
+    def test_completed_legacy_epoch_release_can_start_bare_group_version(self):
+        for previous_target in ('1:6.0.50', '2:6.0.50~rc1', '1:6.0.49'):
+            with self.subTest(previous_target=previous_target):
+                gh = GitHub()
+                gh.start()
+                release = gh.release()
+                release['version'] = previous_target
+                for member in release['members']:
+                    member.pop('version')
+                head = gh.prs[0]['head']['sha']
+                gh.configs[head]['groups']['G2']['version'] = previous_target
+                gh.commits[head]['message'] = gh.ns['MARKER'] + json.dumps(release) + '\n-->'
+                for member in release['members']:
+                    gh.member_pr(member['repo'], merged=True)
+                gh.merge()
+                self.assertEqual(gh.cfg['groups']['G2']['version'], previous_target)
+                epoch = previous_target.split(':', 1)[0]
+                before = len(gh.writes)
+                planned = gh.start(version='6.0.51', dry_run=True)
+                self.assertEqual({m['version'] for m in planned}, {f'{epoch}:6.0.51'})
+                self.assertEqual(len(gh.writes), before)
+                for target in ('6.0.48', previous_target.split(':', 1)[-1]):
+                    with self.assertRaisesRegex(RuntimeError, '必须大于.*基线'):
+                        gh.start(version=target)
+                self.assertEqual(len(gh.writes), before)
+                self.assertEqual(gh.start(version='6.0.51'), planned)
+                self.assertEqual(gh.release()['version'], '6.0.51')
+                for member in planned:
+                    gh.member_pr(member['repo'], merged=True)
+                gh.ns['sync'](gh.repo, 'master', gh.cfg)
+                self.assertEqual(gh.statuses[gh.prs[0]['head']['sha']][0]['state'], 'success')
+                gh.merge()
+                self.assertEqual(gh.cfg['groups']['G2']['version'], '6.0.51')
+                following = gh.start(version='6.0.52', dry_run=True)
+                self.assertEqual({m['version'] for m in following}, {f'{epoch}:6.0.52'})
+
+    def test_archived_or_disabled_member_is_rejected_before_reservation(self):
+        original = self.gh.api
+        for flag in ('archived', 'disabled'):
+            def unavailable_member(path, *args, **kwargs):
+                info = original(path, *args, **kwargs)
+                if path == 'repos/linuxdeepin/go-lib':
+                    info[flag] = True
+                return info
+            with self.subTest(flag=flag), patch.dict(self.gh.ns, api=unavailable_member):
+                for dry_run in (True, False):
+                    with self.assertRaisesRegex(RuntimeError, '已归档或禁用'):
+                        self.gh.start(dry_run=dry_run)
+                self.assertEqual(self.gh.writes, [])
+
+    def test_missing_or_disabled_workflow_is_rejected_before_reservation(self):
+        key = ('linuxdeepin/go-lib', 'call-update-changelog.yml')
+        for info in (None, {'state': 'disabled_fork'}, {'state': 'disabled_manually'}):
+            with self.subTest(info=info):
+                self.gh.workflow_info[key] = info
+                for dry_run in (True, False):
+                    with self.assertRaisesRegex(RuntimeError, '缺少成员工作流|未启用'):
+                        self.gh.start(dry_run=dry_run)
+                self.assertEqual(self.gh.writes, [])
+
+    def test_workflow_dispatch_is_required_on_default_and_selected_branch(self):
+        path = '.github/workflows/call-update-changelog.yml'
+        for branch in ('master', 'release/stable'):
+            for text in (None, 'on:\n  push:\n'):
+                with self.subTest(branch=branch, text=text):
+                    gh = GitHub()
+                    gh.workflow_files[('linuxdeepin/go-lib', path, branch)] = text
+                    with self.assertRaisesRegex(RuntimeError, '缺少成员工作流|不支持 workflow_dispatch'):
+                        gh.start(member_base='release/stable')
+                    self.assertEqual(gh.writes, [])
+
+    def test_workflow_dispatch_shorthand_is_supported(self):
+        for text in ('on: workflow_dispatch\n', 'on: [push, workflow_dispatch]\n'):
+            with self.subTest(text=text):
+                gh = GitHub()
+                gh.workflow_files[('linuxdeepin/go-lib', '.github/workflows/call-update-changelog.yml', 'master')] = text
+                self.assertEqual(len(gh.start(dry_run=True)), 2)
+                self.assertEqual(gh.writes, [])
+
+    def test_epoch_drift_is_blocked_after_release_completion(self):
+        for actual in ('6.1.114', '2:6.1.114', '1:6.1.115'):
+            with self.subTest(actual=actual):
+                gh = GitHub()
+                clipboard = 'linuxdeepin/dde-clipboard'
+                gh.live[clipboard] = '1:6.1.37'
+                gh.start('G3', '6.1.114')
+                for repo in ('linuxdeepin/dde-daemon', clipboard):
+                    gh.member_pr(repo, merged=True, group='G3')
+                gh.merge('G3')
+                gh.live[clipboard] = actual
+                before = len(gh.writes)
+                with self.assertRaises(RuntimeError):
+                    gh.start('G3', '6.1.116')
+                self.assertEqual(len(gh.writes), before)
+                with self.assertRaisesRegex(RuntimeError, 'linuxdeepin/dde-clipboard'):
+                    gh.ns['sync'](gh.repo, 'master', gh.cfg)
+                self.assertEqual(gh.statuses[gh.prs[0]['head']['sha']][0]['state'], 'failure')
+
+    def test_epoch_change_during_next_prepare_is_blocked(self):
+        clipboard = 'linuxdeepin/dde-clipboard'
+        self.gh.live[clipboard] = '1:6.1.37'
+        self.gh.start('G3', '6.1.114')
+        for repo in ('linuxdeepin/dde-daemon', clipboard):
+            self.gh.member_pr(repo, merged=True, group='G3')
+        self.gh.merge('G3')
+        original = self.gh.ns['states']
+        def changed_epoch(*args, **kwargs):
+            result = original(*args, **kwargs)
+            self.gh.live[clipboard] = '2:6.1.114'
+            return result
+        before = len(self.gh.writes)
+        with patch.dict(self.gh.ns, states=changed_epoch):
+            with self.assertRaisesRegex(RuntimeError, '与上轮目标 1:6.1.114 不一致'):
+                self.gh.start('G3', '6.1.115')
+        self.assertEqual(len(self.gh.writes), before)
+
+    def test_invalid_member_target_record_cannot_resume(self):
+        self.gh.start()
+        release = self.gh.release()
+        head = self.gh.prs[0]['head']['sha']
+        before = len(self.gh.writes)
+        for version in ('1:6.0.51', '1:invalid', '1:6.0.50.'):
+            with self.subTest(version=version):
+                release['members'][0]['version'] = version
+                self.gh.commits[head]['message'] = self.gh.ns['MARKER'] + json.dumps(release) + '\n-->'
+                with self.assertRaises(RuntimeError):
+                    self.gh.start()
+                self.assertEqual(len(self.gh.writes), before)
+
+    def test_legacy_record_without_member_versions_keeps_original_target(self):
+        for target in ('6.0.50', '1:6.0.50~rc1'):
+            with self.subTest(target=target):
+                gh = GitHub()
+                gh.start()
+                release = gh.release()
+                release['version'] = target
+                for member in release['members']:
+                    member.pop('version', None)
+                head = gh.prs[0]['head']['sha']
+                gh.configs[head]['groups']['G2']['version'] = target
+                gh.commits[head]['message'] = gh.ns['MARKER'] + json.dumps(release) + '\n-->'
+                members = gh.start(version=target)
+                self.assertEqual({m.get('version', target) for m in members}, {target})
+                for member in members:
+                    gh.member_pr(member['repo'], merged=True)
+                gh.ns['sync'](gh.repo, 'master', gh.cfg)
+                self.assertEqual(gh.statuses[head][0]['state'], 'success')
+
+    def test_sync_without_release_recognizes_matching_versions_with_epoch(self):
+        self.gh.live['linuxdeepin/dde-clipboard'] = '1:6.1.113'
+        for baseline in ('6.1.113', '1:6.1.113'):
+            with self.subTest(baseline=baseline):
+                self.gh.cfg['groups']['G3']['version'] = baseline
+                with patch('builtins.print') as output:
+                    self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+                output.assert_not_called()
+                self.assertEqual(self.gh.writes, [])
 
     def test_first_release_blocks_existing_member_release_pr(self):
         for branch in ('release-6.0.16', 'automation/update-changelog/6.0.16'):
@@ -458,7 +696,7 @@ class GroupReleaseTests(unittest.TestCase):
             self.gh.start()
 
     def test_version_and_safe_branch_name(self):
-        self.gh.start(version='1:6.0.50~rc1')
+        self.gh.start(version='6.0.50~rc1')
         self.assertEqual(self.gh.prs[0]['head']['ref'], 'baseline/G2')
         with self.assertRaises(RuntimeError):
             GitHub().start('G1', '6.8')
@@ -477,12 +715,27 @@ class GroupReleaseTests(unittest.TestCase):
                 self.assertEqual(gh.writes, [])
                 self.assertNotIn('baseline/G1', gh.refs)
 
-    def test_g1_valid_semver_keeps_prerelease_and_build_metadata(self):
-        for version in ('6.7.53', '6.7.53-rc.1', '6.7.53+build.01',
-                        '6.7.53-rc.1+build.01'):
+    def test_g1_new_release_rejects_prerelease(self):
+        for version in ('6.7.53-rc.1', '6.7.53-rc.1+build.01'):
             with self.subTest(version=version):
-                self.assertEqual(len(self.gh.start('G1', version, dry_run=True)), 1)
+                gh = GitHub()
+                with self.assertRaisesRegex(RuntimeError, '暂不支持预发布'):
+                    gh.start('G1', version)
+                self.assertEqual(gh.writes, [])
+
+        self.assertEqual(len(self.gh.start('G1', '6.7.53+build-01', dry_run=True)), 1)
         self.assertEqual(self.gh.writes, [])
+
+    def test_existing_g1_prerelease_can_resume(self):
+        self.gh.start('G1', '6.7.53')
+        release = self.gh.release('G1')
+        release['version'] = '6.7.53-rc.1'
+        for member in release['members']:
+            member['version'] = '6.7.53-rc.1'
+        head = self.gh.prs[0]['head']['sha']
+        self.gh.configs[head]['groups']['G1']['version'] = '6.7.53-rc.1'
+        self.gh.commits[head]['message'] = self.gh.ns['MARKER'] + json.dumps(release) + '\n-->'
+        self.assertEqual(len(self.gh.start('G1', '6.7.53-rc.1')), 1)
 
     def test_invalid_member_branch_is_rejected_before_reservation(self):
         for group, version in (('G1', '6.7.53+build.lock'), ('G2', '6.0.50.'),
