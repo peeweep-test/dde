@@ -8,9 +8,9 @@ on:
         description: 组
         required: true
         type: choice
-        options: [G1, G2, G3, G4, G5]
+        options: [G1, G2, G3, G4]
       version:
-        description: 目标版本（相同目标可恢复未完成的发布）
+        description: 组目标版本（新发布不带 epoch；相同目标可恢复原发布）
         required: true
         type: string
       name:
@@ -22,16 +22,16 @@ on:
         required: true
         type: string
       base_branch:
-        description: 成员目标分支（G2–G5；留空使用各成员默认分支，恢复时沿用原分支）
+        description: 成员目标分支（G2、G3、G4；留空使用各成员默认分支，恢复时沿用原分支）
         required: false
         type: string
       distribution:
-        description: Changelog 发行套件（G2–G5）
+        description: Changelog 发行套件（G2、G3、G4）
         required: false
         type: string
         default: unstable
       create_pr:
-        description: 创建发布 PR（G2–G5；取消勾选只生成成员 changelog）
+        description: 创建发布 PR（G2、G3、G4；取消勾选只生成成员 changelog）
         required: false
         type: boolean
         default: true
@@ -47,6 +47,7 @@ permissions:
 concurrency:
   group: release-group-${{ inputs.group }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   plan:
@@ -86,7 +87,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GROUP: ${{ inputs.group }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ matrix.member.version || inputs.version }}
           REPO: ${{ matrix.member.repo }}
           BASE: ${{ matrix.member.base }}
           WORKFLOW: ${{ matrix.member.workflow }}
