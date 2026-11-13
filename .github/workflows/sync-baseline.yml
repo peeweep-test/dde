@@ -353,7 +353,7 @@ jobs:
           def body(release):
               return (f"{release['group']} 发布 {release['version']}。\n\n"
                       "成员 changelog PR 全部合并后，group-release-ready 才会通过；基线 PR 合并后本轮结束。\n"
-                      "派发失败或关闭本 PR 不会解除锁定；使用相同组和版本恢复本轮。\n\n" +
+                      "派发失败不会解除锁定；关闭本 PR 会同步关闭仍开放的成员 PR，使用相同组和版本恢复本轮。\n\n" +
                       member_links(release, {}))
 
           def create_pr(repo, branch, base, release):
@@ -389,11 +389,25 @@ jobs:
               check_same_head_ordinary_prs(repo, release["base_branch"], cfg, pr["head"]["sha"])
               members = release["members"]
               prs = dict(zip([m["repo"] for m in members], parallel(lambda m: member_prs(release, m), members)))
+              if pr["state"] == "closed" and not pr["merged_at"]:
+                  failures = []
+                  for member in members:
+                      for member_pr in prs[member["repo"]]:
+                          if member_pr["state"] != "open":
+                              continue
+                          try:
+                              api(f"repos/{member['repo']}/pulls/{member_pr['number']}",
+                                  {"state": "closed"}, method="PATCH")
+                              member_pr["state"] = "closed"
+                          except Exception as error:
+                              failures.append(f"{member['repo']}#{member_pr['number']}: {error}")
+                  update_member_links(repo, pr, release, prs)
+                  if failures:
+                      raise RuntimeError("基线 PR 已关闭，但部分成员发布 PR 关闭失败: " + "; ".join(failures))
+                  raise RuntimeError("基线 PR 被关闭但未合并；关闭不代表发布完成")
               update_member_links(repo, pr, release, prs)
               results = states(release, prs=prs)
               ready = all(s == "merged" for s in results)
-              if pr["state"] == "closed" and not pr["merged_at"]:
-                  raise RuntimeError("基线 PR 被关闭但未合并；关闭不代表发布完成")
               if pr["merged_at"] and cfg["groups"][release["group"]]["version"] != release["version"]:
                   raise RuntimeError("已合并的基线与本轮目标不一致")
               if not (pr["merged_at"] and ready) and repo_names(cfg, release["group"]) != [m["repo"] for m in release["members"]]:
