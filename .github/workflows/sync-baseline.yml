@@ -34,6 +34,14 @@ on:
         required: false
         type: boolean
         default: true
+      defer_pr:
+        required: false
+        type: boolean
+        default: false
+      finalize:
+        required: false
+        type: boolean
+        default: false
     secrets:
       APP_ID:
         required: true
@@ -83,6 +91,8 @@ jobs:
           MEMBER_BASE: ${{ inputs.base_branch }}
           DISTRIBUTION: ${{ inputs.distribution }}
           CREATE_PR: ${{ inputs.create_pr }}
+          DEFER_PR: ${{ inputs.defer_pr }}
+          FINALIZE: ${{ inputs.finalize }}
         run: |
           python3 - <<'PY'
           import base64
@@ -93,6 +103,7 @@ jobs:
           import re
           import subprocess
           import tempfile
+          import time
           from concurrent.futures import ThreadPoolExecutor
           from urllib.parse import quote, urlencode
 
@@ -334,11 +345,10 @@ jobs:
           def member_links(release, prs):
               lines = [MEMBER_LINKS_START, "### 成员发布 PR", ""]
               for member in release["members"]:
-                  links = []
-                  for p in prs.get(member["repo"], []):
-                      state = "已合并" if p["merged_at"] else "待合并" if p["state"] == "open" else "已关闭，未合并"
-                      links.append(f"[#{p['number']}]({p['html_url']})（{state}）")
-                  lines.append(f"- {member['repo']}: {'、'.join(links) or '尚无发布 PR'}")
+                  links = [p["html_url"] for p in prs.get(member["repo"], [])]
+                  lines.extend(f"- {link}" for link in links)
+                  if not links:
+                      lines.append(f"- {member['repo']}: 尚无发布 PR")
               return "\n".join([*lines, MEMBER_LINKS_END])
 
           def update_member_links(repo, pr, release, prs):
@@ -356,15 +366,16 @@ jobs:
               if updated != current:
                   api(path, {"body": updated}, method="PATCH")
 
-          def body(release):
+          def body(release, prs=None):
               return (f"{release['group']} 发布 {release['version']}。\n\n"
                       "成员 changelog PR 全部合并后，group-release-ready 才会通过；基线 PR 合并后本轮结束。\n"
                       "派发失败不会解除锁定；关闭本 PR 会同步关闭仍开放的成员 PR，使用相同组和版本恢复本轮。\n\n" +
-                      member_links(release, {}))
+                      member_links(release, prs or {}))
 
-          def create_pr(repo, branch, base, release):
+          def create_pr(repo, branch, base, release, prs=None):
               return api(f"repos/{repo}/pulls", {"head": branch, "base": base, "draft": True,
-                  "title": f"chore(baseline): {release['group']} -> {release['version']}", "body": body(release)})
+                  "title": f"chore(baseline): {release['group']} -> {release['version']}",
+                  "body": body(release, prs)})
 
           def check_ordinary(repo, base, cfg, pr):
               if pr["head"]["ref"].startswith("baseline-test-20261113/"):
@@ -427,7 +438,26 @@ jobs:
                                   "variables": {"id": pr["node_id"]}})
               return results
 
-          def start(repo, base, sha, cfg, group, target, dry_run, member_base="", distribution="unstable", create_pr_enabled=True):
+          def wait_for_member_prs(release):
+              timeout = int(os.environ.get("MEMBER_PR_WAIT_SECONDS", "1200"))
+              interval = max(1, int(os.environ.get("MEMBER_PR_POLL_SECONDS", "30")))
+              deadline = time.monotonic() + timeout
+              members = release["members"]
+              while True:
+                  prs = dict(zip([m["repo"] for m in members],
+                                 parallel(lambda m: member_prs(release, m), members)))
+                  results = states(release, prs=prs)
+                  waiting = [m["repo"] for m, state in zip(members, results)
+                             if state in ("missing", "running")]
+                  if not waiting:
+                      return prs
+                  if time.monotonic() >= deadline:
+                      raise RuntimeError("等待成员发布 PR 超时: " + ", ".join(waiting))
+                  print(f"等待成员发布 PR: {', '.join(waiting)}")
+                  time.sleep(interval)
+
+          def start(repo, base, sha, cfg, group, target, dry_run, member_base="", distribution="unstable",
+                    create_pr_enabled=True, defer_pr=False, finalize=False):
               if group not in cfg["groups"]:
                   raise RuntimeError(f"未知组: {group}")
               member_base = member_base.strip()
@@ -438,6 +468,8 @@ jobs:
               validate_version(group, target)
               branch = f"baseline-test-20261113/{group}"
               pr, reservation, release = active(repo, base, cfg, group)
+              if finalize and not release:
+                  raise RuntimeError("没有可等待的基线发布记录，请先运行 Release group")
               if (group == "G1" and "-" in target.split("+", 1)[0]
                       and not (release and target == release["version"])):
                   raise RuntimeError("G1 新发布必须是正式三段版本，暂不支持预发布版本")
@@ -464,7 +496,10 @@ jobs:
                       if not reservation:
                           api(f"repos/{repo}/git/refs", {"ref": f"refs/heads/{branch}", "sha": head})
                       if not pr:
-                          pr = create_pr(repo, branch, base, release)
+                          if defer_pr and not finalize:
+                              return [m for m, s in zip(release["members"], results) if s == "missing"]
+                          prs = wait_for_member_prs(release) if finalize else None
+                          pr = create_pr(repo, branch, base, release, prs)
                       elif pr["state"] == "closed":
                           pr = api(f"repos/{repo}/pulls/{pr['number']}", {"state": "open"}, method="PATCH")
                       results = check(repo, pr, release, cfg)
@@ -534,7 +569,7 @@ jobs:
               if dry_run:
                   return members
               release = {"group": group, "version": target, "base_sha": sha, "base_branch": base,
-                         "distribution": distribution, "members": members,
+                         "distribution": distribution, "wait_for_member_prs": defer_pr, "members": members,
                          "started_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
               text = rewrite(content(repo, "groups.yaml", sha), group, target)
               blob = api(f"repos/{repo}/git/blobs", {"content": text, "encoding": "utf-8"})
@@ -547,8 +582,9 @@ jobs:
                   api(f"repos/{repo}/git/refs/heads/{quote(branch, safe='/')}", method="DELETE")
               # 创建 ref 是抢占点；已有同名 ref 会失败，绝不覆盖或强推。
               api(f"repos/{repo}/git/refs", {"ref": f"refs/heads/{branch}", "sha": commit["sha"]})
-              pr = create_pr(repo, branch, base, release)
-              status(repo, pr["head"]["sha"], "pending", "等待整组 changelog PR 合并")
+              if not defer_pr:
+                  pr = create_pr(repo, branch, base, release)
+                  status(repo, pr["head"]["sha"], "pending", "等待整组 changelog PR 合并")
               return members
 
           def sync(repo, base, cfg, groups=None):
@@ -560,7 +596,10 @@ jobs:
                       pr, reservation, release = active(repo, base, cfg, group)
                       if not pr:
                           if reservation:
-                              failures.append(f"{group}: 分支已保留但 PR 未创建，用相同组和版本恢复")
+                              if release and release.get("wait_for_member_prs"):
+                                  print(f"{group}: 已预留基线，等待成员 PR 后创建基线 PR")
+                              else:
+                                  failures.append(f"{group}: 分支已保留但 PR 未创建，用相同组和版本恢复")
                           else:
                               names = repo_names(cfg, group)
                               versions = parallel(lambda name: head_version(name, api(f"repos/{name}")["default_branch"]), names)
@@ -589,13 +628,15 @@ jobs:
               group = os.environ.get("GROUP", "").strip()
               version = os.environ.get("VERSION", "").strip()
               if group and version:
-                  members = start(repo, base, sha, cfg, group, os.environ["VERSION"],
+                  members = start(repo, base, sha, cfg, group, version,
                                   os.environ.get("DRY_RUN", "").lower() == "true",
                                   os.environ.get("MEMBER_BASE", ""), os.environ.get("DISTRIBUTION", "unstable"),
-                                  os.environ.get("CREATE_PR", "true").lower() == "true")
-                  print(f"{group}: {os.environ['VERSION']}")
+                                  os.environ.get("CREATE_PR", "true").lower() == "true",
+                                  os.environ.get("DEFER_PR", "").lower() == "true",
+                                  os.environ.get("FINALIZE", "").lower() == "true")
+                  print(f"{group}: {version}")
                   for member in members:
-                      print(f"  - {member['repo']}: {member.get('version', os.environ['VERSION'])}")
+                      print(f"  - {member['repo']}: {member.get('version', version)}")
                   with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
                       f.write(f"repos={json.dumps(members)}\n")
               else:
