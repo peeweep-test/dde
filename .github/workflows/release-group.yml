@@ -1,6 +1,6 @@
 name: Release group
 
-# 先保留本组基线草稿 PR，再并行派发；未完成的发布不能换目标版本。
+# 先预留本组基线分支并派发成员；成员 PR 都创建后再创建基线 PR。
 on:
   workflow_dispatch:
     inputs:
@@ -59,6 +59,7 @@ jobs:
       base_branch: ${{ inputs.base_branch }}
       distribution: ${{ inputs.distribution }}
       create_pr: ${{ inputs.create_pr }}
+      defer_pr: true
     secrets:
       APP_ID: ${{ secrets.APP_ID }}
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
@@ -117,3 +118,20 @@ jobs:
           else
             echo "已触发 $REPO -> $VERSION；生成的 changelog 见成员 Actions 的 diff 和产物"
           fi
+
+  finalize:
+    needs: [plan, dispatch]
+    if: ${{ always() && !cancelled() && !inputs.dry_run && inputs.create_pr && needs.plan.result == 'success' && (needs.dispatch.result == 'success' || needs.dispatch.result == 'skipped') }}
+    uses: ./.github/workflows/sync-baseline.yml
+    with:
+      group: ${{ inputs.group }}
+      version: ${{ inputs.version }}
+      dry_run: false
+      base_branch: ${{ inputs.base_branch }}
+      distribution: ${{ inputs.distribution }}
+      create_pr: true
+      defer_pr: true
+      finalize: true
+    secrets:
+      APP_ID: ${{ secrets.APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
