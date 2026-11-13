@@ -34,7 +34,7 @@ groups:
   # 原 G2 与 G3 合并；基线采用较高的 6.1.113。
   G2:
     name: 服务与会话桌面应用
-    version: "6.1.113"
+    version: "6.8.0"
     members:
       - go-lib
       - go-dbus-factory
