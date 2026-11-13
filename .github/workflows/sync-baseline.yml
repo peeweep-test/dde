@@ -466,7 +466,7 @@ jobs:
                           paginate=True)
                       current = next((status for status in statuses
                                       if status["context"] == "group-version-guard"), None)
-                      if current and current["state"] in ("success", "pending"):
+                      if current and current["state"] == "success":
                           continue
                       path = f"repos/{member['repo']}/pulls/{member_pr['number']}"
                       body = (api(path)["body"] or "").rstrip()
