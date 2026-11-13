@@ -294,7 +294,7 @@ jobs:
                               prs[m["repo"]] if prs is not None else None), release["members"])
 
           def active(repo, base, cfg, group):
-              branch = f"baseline/{group}"
+              branch = f"baseline-test-20261113/{group}"
               pr, reservation = latest(repo, branch, base), ref(repo, branch)
               if not pr and not reservation:
                   return None, None, None
@@ -361,7 +361,7 @@ jobs:
                   "title": f"chore(baseline): {release['group']} -> {release['version']}", "body": body(release)})
 
           def check_ordinary(repo, base, cfg, pr):
-              if pr["head"]["ref"].startswith("baseline/"):
+              if pr["head"]["ref"].startswith("baseline-test-20261113/"):
                   return
               before = config(repo, pr["base"]["sha"])
               after = config(pr["head"]["repo"]["full_name"], pr["head"]["sha"])
@@ -416,7 +416,7 @@ jobs:
                   raise RuntimeError("G1 的 Auto Release 不支持 base_branch、distribution 或 create_pr=false")
               dry_run = dry_run or not create_pr_enabled
               validate_version(group, target)
-              branch = f"baseline/{group}"
+              branch = f"baseline-test-20261113/{group}"
               pr, reservation, release = active(repo, base, cfg, group)
               if (group == "G1" and "-" in target.split("+", 1)[0]
                       and not (release and target == release["version"])):
@@ -458,7 +458,7 @@ jobs:
                   raise RuntimeError(f"{target} 必须大于 {group} 基线 {current}")
               query = urlencode({"state": "open", "per_page": 100})
               for old in api(f"repos/{repo}/pulls?{query}", paginate=True):
-                  if old["head"]["ref"].startswith("baseline/") and old["head"]["ref"] != branch:
+                  if old["head"]["ref"].startswith("baseline-test-20261113/") and old["head"]["ref"] != branch:
                       old_cfg = config(old["head"]["repo"]["full_name"], old["head"]["sha"])
                       comparison = api(f"repos/{repo}/compare/{old['base']['sha']}...{old['head']['sha']}")
                       old_base = config(repo, comparison["merge_base_commit"]["sha"])
@@ -536,7 +536,7 @@ jobs:
               for group in cfg["groups"]:
                   pr = None
                   try:
-                      branch = f"baseline/{group}"
+                      branch = f"baseline-test-20261113/{group}"
                       pr, reservation, release = active(repo, base, cfg, group)
                       if not pr:
                           if reservation:
@@ -583,8 +583,8 @@ jobs:
                           event = json.load(f)
                       pr = api(f"repos/{repo}/pulls/{event['number']}")
                       try:
-                          if pr["head"]["ref"].startswith("baseline/"):
-                              pr_group = pr["head"]["ref"].removeprefix("baseline/")
+                          if pr["head"]["ref"].startswith("baseline-test-20261113/"):
+                              pr_group = pr["head"]["ref"].removeprefix("baseline-test-20261113/")
                               if pr_group not in cfg["groups"] or pr["head"]["repo"]["full_name"] != repo:
                                   raise RuntimeError("旧基线 PR 或外部发布分支，需先人工核实")
                               release = record(repo, pr["head"]["sha"], pr_group)
@@ -595,7 +595,7 @@ jobs:
                               check_ordinary(repo, base, cfg, pr)
                               # 状态挂在提交上，普通 PR 也必须遵守同 SHA 基线的发布检查。
                               for g in cfg["groups"]:
-                                  marker = latest(repo, f"baseline/{g}", base)
+                                  marker = latest(repo, f"baseline-test-20261113/{g}", base)
                                   if marker and marker["head"]["sha"] == pr["head"]["sha"]:
                                       marker, reservation, release = active(repo, base, cfg, g)
                                       if not marker:
