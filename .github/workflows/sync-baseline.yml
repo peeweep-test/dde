@@ -391,8 +391,6 @@ jobs:
           def check(repo, pr, release, cfg):
               if pr["base"]["ref"] != release["base_branch"]:
                   raise RuntimeError("基线 PR 目标已改变，请先核实原发布")
-              # 状态挂在提交上；成功前同时验证同一提交上的普通 PR。
-              check_same_head_ordinary_prs(repo, release["base_branch"], cfg, pr["head"]["sha"])
               members = release["members"]
               prs = dict(zip([m["repo"] for m in members], parallel(lambda m: member_prs(release, m), members)))
               if pr["state"] == "closed" and not pr["merged_at"]:
@@ -411,6 +409,8 @@ jobs:
                   if failures:
                       raise RuntimeError("基线 PR 已关闭，但部分成员发布 PR 关闭失败: " + "; ".join(failures))
                   raise RuntimeError("基线 PR 被关闭但未合并；关闭不代表发布完成")
+              # 状态挂在提交上；成功前同时验证同一提交上的普通 PR。
+              check_same_head_ordinary_prs(repo, release["base_branch"], cfg, pr["head"]["sha"])
               update_member_links(repo, pr, release, prs)
               results = states(release, prs=prs)
               ready = all(s == "merged" for s in results)
