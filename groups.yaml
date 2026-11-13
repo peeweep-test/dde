@@ -34,7 +34,7 @@ groups:
   # 当前统一发布组；新增 dde-appearance，首轮目标须高于其 6.5.x 当前版本。
   G2:
     name: 服务与会话桌面应用
-    version: "6.1.113"
+    version: "6.8.1"
     members:
       - go-lib
       - go-dbus-factory
