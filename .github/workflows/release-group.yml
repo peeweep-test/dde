@@ -8,7 +8,7 @@ on:
         description: 组
         required: true
         type: choice
-        options: [G1, G2, G3, G4]
+        options: [G1, G2]
       version:
         description: 组目标版本（新发布不带 epoch；相同目标可恢复原发布）
         required: true
@@ -22,16 +22,16 @@ on:
         required: true
         type: string
       base_branch:
-        description: 成员目标分支（G2、G3、G4；留空使用各成员默认分支，恢复时沿用原分支）
+        description: 成员目标分支（G2；留空使用各成员默认分支，恢复时沿用原分支）
         required: false
         type: string
       distribution:
-        description: Changelog 发行套件（G2、G3、G4）
+        description: Changelog 发行套件（G2）
         required: false
         type: string
         default: unstable
       create_pr:
-        description: 创建发布 PR（G2、G3、G4；取消勾选只生成成员 changelog）
+        description: 创建发布 PR（G2；取消勾选只生成成员 changelog）
         required: false
         type: boolean
         default: true

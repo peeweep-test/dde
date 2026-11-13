@@ -7,7 +7,7 @@
 ## 版本规则
 
 - 组基线 `version` 不带 epoch；每轮发布完成后，成员 `debian/changelog` 去掉 epoch 的版本须与组基线一致。
-- G2、G3、G4 保留各成员现有 epoch。例如组目标 `6.1.114` 会将 dde-clipboard 的 `1:6.1.37` 更新为 `1:6.1.114`，其他无 epoch 成员更新为 `6.1.114`，无需更名。
+- G2 保留各成员现有 epoch；成员完整目标去掉 epoch 后须与组目标一致。
 - 组内任一仓库有更新，整组一起升版本、重新打包。
 - 统一发版沿用 `debian/control` 中现有的依赖下界，不修改 `>=` / `>>` 约束。
 
@@ -30,9 +30,9 @@
 - `group`：要发布的组。
 - `version`：不带 epoch 的组目标版本，须高于基线；继承 epoch 后的各成员目标须高于其当前完整版本。继续未完成的发布时，填写原组目标版本。G1 新发布只接受正式三段版本，不支持 `-rc` 等预发布版本。
 - `name` / `email`：写入成员 `debian/changelog` 的维护者姓名和邮箱，必填。
-- `base_branch`：G2、G3、G4 的成员目标分支；留空使用各成员默认分支。所填分支须在所有成员中存在并接入调用工作流。
-- `distribution`：G2、G3、G4 的 changelog 发行套件，默认 `unstable`。新发布记录会固定该值，恢复时须沿用。
-- `create_pr`：默认 `true`。G2、G3、G4 取消勾选后只生成成员 changelog，在成员 Actions 中显示 diff 并上传产物，不创建本轮基线分支或任何发布 PR。
+- `base_branch`：G2 的成员目标分支；留空使用各成员默认分支。所填分支须在所有成员中存在并接入调用工作流。
+- `distribution`：G2 的 changelog 发行套件，默认 `unstable`。新发布记录会固定该值，恢复时须沿用。
+- `create_pr`：默认 `true`。G2 取消勾选后只生成成员 changelog，在成员 Actions 中显示 diff 并上传产物，不创建本轮基线分支或任何发布 PR。
 - `dry_run`：默认 `true`，检查当前状态并列出需要触发的成员；设为 `false` 后才创建 PR、触发工作流。
 
 只生成 changelog 时也须把 `dry_run` 设为 `false`，才会触发成员工作流。
@@ -41,7 +41,7 @@ G1 的 Auto Release 支持 `name` / `email`，使用默认分支及原有发布�
 新一轮发布在 `create_pr=true` 时按以下顺序执行：
 
 1. 检查目标版本和已有发布记录，确认本组没有未完成的发布。已有统一发布记录的组，还须确认成员当前完整版本与上轮成员目标一致。
-2. 创建 `baseline/<组>` 分支和原始发布提交，只修改本组的版本，并在提交中固定各成员继承 epoch 后的完整目标；此时暂不创建基线 PR。
+2. 创建 `baseline-test-20261113/<组>` 分支和原始发布提交，只修改本组的版本，并在提交中固定各成员继承 epoch 后的完整目标；此时暂不创建基线 PR。
 3. 按记录中的完整目标并行触发成员工作流，由各仓库生成 changelog 并创建发布 PR。
 4. 等待每个成员都创建开放或已合并的发布 PR，再创建草稿基线 PR，并直接写入全部成员 PR 的裸链接。
 5. 所有成员 PR 合并、changelog 完整版本均为各自记录的目标后，`group-release-ready` 检查通过，基线草稿 PR 转为待审。
@@ -111,7 +111,7 @@ G1 的 Auto Release 支持 `name` / `email`，使用默认分支及原有发布�
 ## 配置与上线
 
 沿用组织的 `APP_ID` 和 `APP_PRIVATE_KEY`。成员发版调用模板使用 `secrets: inherit`，
-因此这两个 Secret 必须对 `dde` 和 35 个成员仓库可用；建议使用组织 Secret 并只授权这 36 个仓库。
+因此这两个 Secret 必须对 `dde` 和 25 个成员仓库可用；建议使用组织 Secret 并只授权这 26 个仓库。
 GitHub App 须安装到 dde 和各成员仓库，并授予以下仓库权限：
 
 - `Actions`：Read and write。
@@ -130,9 +130,9 @@ GitHub App 须安装到 dde 和各成员仓库，并授予以下仓库权限：
 普通 PR 即使没有修改基线版本，只要与当前基线 PR 共用同一提交，也要通过该轮发布检查；
 成员未全部合并时仍为等待，发布记录或 PR 状态异常时失败。
 
-基线 PR 创建成功前，保留 `baseline/*` 分支。此时发布记录只在该分支中，删除后无法自动恢复。
+基线 PR 创建成功前，保留 `baseline-test-20261113/*` 分支。此时发布记录只在该分支中，删除后无法自动恢复。
 
-首次使用前，先等待成员仓库已有的发版工作流结束，处理现有成员 PR、旧格式的 `baseline/<组>-<版本>` PR
+首次使用前，先等待成员仓库已有的发版工作流结束，处理现有成员 PR、旧格式的 `baseline-test-20261113/<组>-<版本>` PR
 和一次修改多组的基线 PR。确认成员默认分支已接入对应工作流；go-lib 的 `call-update-changelog.yml` 需先合入其默认分支。
 创建基线前会检查成员是否归档或禁用、发版工作流是否启用，以及默认分支和所选目标分支的入口是否支持
 `workflow_dispatch` 且包含本轮所需的参数名和参数类型。
@@ -146,7 +146,7 @@ python3 -I .github/tests/test_group_release.py -v
 ## 组件侧校验
 
 成员通过 `linuxdeepin/.github` 的 `verify-group-version.yml` 校验 `debian/changelog` 版本，
-调用入口为 `workflow-templates/call-verify-group-version.yml`。模板同步配置覆盖全部 35 个成员；
+调用入口为 `workflow-templates/call-verify-group-version.yml`。模板同步配置覆盖全部 25 个成员；
 成员默认分支接入入口、启用分支保护后才会阻止合并。
 
 不改 changelog 版本的普通 PR 可以通过。改版 PR 的完整成员目标版本、来源仓库、自动化分支、目标分支和
@@ -161,8 +161,7 @@ python3 -I .github/tests/test_group_release.py -v
 部署前先完成上述首用准备，再合入共享校验工作流和模板配置，
 逐仓库确认成员入口安装完成后，上线本仓库协调器。自动创建模板 PR 的工具升级单独安排。
 验证两种检查均能运行且来源正确后，逐组启用保护。测试 fork 会自动读取同组织的 `dde` 发布记录。
-go-lib 的发布入口须先合入其默认分支。dde-clipboard 保留原包名与 epoch；带 epoch 的新一轮发布须等
-协调器与成员校验工作流均更新后再触发。
+go-lib 的发布入口须先合入其默认分支。
 
 ## 分组
 
@@ -171,11 +170,7 @@ go-lib 的发布入口须先合入其默认分支。dde-clipboard 保留原包�
 | 组 | 说明 | 成员 |
 |---|---|---|
 | G1 | DTK 基础库 | dtkcommon、dtklog、dtkcore、dtkgui、dtkwidget、dtkdeclarative、qt5platform-plugins、qt5integration |
-| G2 | 服务与会话桌面应用 | go-lib、go-dbus-factory、dde-api、dde-daemon、dde-services、dde-session、dde-session-shell-v25、dde-polkit-agent、dde-session-ui、dde-shell、dde-tray-loader、dde-application-manager、deepin-service-manager、dde-control-center、dde-launchpad、dde-clipboard、dde-network-core、deepin-update-ui、dcc-insider-plugin、xdg-desktop-portal-dde、deepin-pw-check、dde-app-services |
-| G3 | 外观与主题 | dde-appearance、deepin-desktop-theme、deepin-face、deepin-screensaver |
-| G4 | 图标主题 | deepin-icon-theme |
-
-deepin-pw-check 的密码库由控制中心和会话 UI 链接使用；dde-app-services 提供桌面配置服务，两者随 G2 一起交付。
+| G2 | 服务与会话桌面应用 | go-lib、go-dbus-factory、dde-api、dde-daemon、dde-services、dde-session、dde-session-shell-v25、dde-shell、dde-tray-loader、dde-application-manager、deepin-service-manager、dde-control-center、dde-launchpad、dde-network-core、deepin-update-ui、xdg-desktop-portal-dde、dde-appearance |
 
 dde-dialog、dde-manual-content、gnome-keyring 不参与组版本统一，保留各自的版本。
 dtk6log 已归档，不参与组发布。

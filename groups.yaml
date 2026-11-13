@@ -20,7 +20,7 @@ repo_overrides:
 groups:
   G1:
     name: DTK 基础库
-    version: "6.8.0"
+    version: "6.7.52"
     members:
       - dtkcommon
       - dtklog
@@ -31,10 +31,10 @@ groups:
       - qt5platform-plugins
       - qt5integration
 
-  # 原 G2 与 G3 合并；基线采用较高的 6.1.113。
+  # 当前统一发布组；新增 dde-appearance，首轮目标须高于其 6.5.x 当前版本。
   G2:
     name: 服务与会话桌面应用
-    version: "6.8.0"
+    version: "6.1.113"
     members:
       - go-lib
       - go-dbus-factory
@@ -43,37 +43,16 @@ groups:
       - dde-services
       - dde-session
       - dde-session-shell-v25
-      - dde-polkit-agent
-      - dde-session-ui
       - dde-shell
       - dde-tray-loader
       - dde-application-manager
       - deepin-service-manager
       - dde-control-center
       - dde-launchpad
-      - dde-clipboard
       - dde-network-core
       - deepin-update-ui
-      - dcc-insider-plugin
       - xdg-desktop-portal-dde
-      - deepin-pw-check
-      - dde-app-services
-
-  G3:
-    name: 外观与主题
-    version: "6.5.12"
-    members:
       - dde-appearance
-      - deepin-desktop-theme
-      - deepin-face
-      - deepin-screensaver
-
-  # 单成员组：日期版本，独立成线，不并入 G3
-  G4:
-    name: 图标主题
-    version: "2026.11.05"
-    members:
-      - deepin-icon-theme
 
 # G6 独立组件不参与统一，故不列入：
 #   dde-dialog / dde-manual-content / gnome-keyring
