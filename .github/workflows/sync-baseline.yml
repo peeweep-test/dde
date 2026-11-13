@@ -456,6 +456,24 @@ jobs:
                   print(f"等待成员发布 PR: {', '.join(waiting)}")
                   time.sleep(interval)
 
+          def retrigger_member_checks(release, prs):
+              for member in release["members"]:
+                  for member_pr in prs.get(member["repo"], []):
+                      if member_pr["state"] != "open":
+                          continue
+                      statuses = api(
+                          f"repos/{member['repo']}/commits/{member_pr['head']['sha']}/statuses?per_page=100",
+                          paginate=True)
+                      current = next((status for status in statuses
+                                      if status["context"] == "group-version-guard"), None)
+                      if current and current["state"] in ("success", "pending"):
+                          continue
+                      path = f"repos/{member['repo']}/pulls/{member_pr['number']}"
+                      body = (api(path)["body"] or "").rstrip()
+                      body = re.sub(r"\n*<!-- group-version-recheck:[^>]+ -->\s*$", "", body)
+                      marker = f"<!-- group-version-recheck:{time.time_ns()} -->"
+                      api(path, {"body": f"{body}\n\n{marker}" if body else marker}, method="PATCH")
+
           def start(repo, base, sha, cfg, group, target, dry_run, member_base="", distribution="unstable",
                     create_pr_enabled=True, defer_pr=False, finalize=False):
               if group not in cfg["groups"]:
@@ -475,7 +493,9 @@ jobs:
                   raise RuntimeError("G1 新发布必须是正式三段版本，暂不支持预发布版本")
               if release:
                   head = pr["head"]["sha"] if pr else reservation["object"]["sha"]
-                  results = states(release)
+                  prs = dict(zip([m["repo"] for m in release["members"]],
+                                 parallel(lambda m: member_prs(release, m), release["members"])))
+                  results = states(release, prs=prs)
                   complete = bool(pr and pr["merged_at"] and all(s == "merged" for s in results)
                                   and cfg["groups"][group]["version"] == release["version"])
                   if not complete:
@@ -498,11 +518,14 @@ jobs:
                       if not pr:
                           if defer_pr and not finalize:
                               return [m for m, s in zip(release["members"], results) if s == "missing"]
-                          prs = wait_for_member_prs(release) if finalize else None
+                          if finalize:
+                              prs = wait_for_member_prs(release)
                           pr = create_pr(repo, branch, base, release, prs)
                       elif pr["state"] == "closed":
                           pr = api(f"repos/{repo}/pulls/{pr['number']}", {"state": "open"}, method="PATCH")
                       results = check(repo, pr, release, cfg)
+                      if finalize:
+                          retrigger_member_checks(release, prs)
                       return [m for m, s in zip(release["members"], results) if s == "missing"]
                   if reservation and reservation["object"]["sha"] != head:
                       raise RuntimeError("已完成的发布分支被改动，不能删除")
