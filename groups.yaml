@@ -54,5 +54,5 @@ groups:
       - xdg-desktop-portal-dde
       - dde-appearance
 
-# G6 独立组件不参与统一，故不列入：
+# 独立组件不参与统一，故不列入：
 #   dde-dialog / dde-manual-content / gnome-keyring
