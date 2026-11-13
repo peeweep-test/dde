@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
+    inputs:
+      group:
+        description: 只检查指定组（留空检查全部组）
+        required: false
+        type: string
   pull_request_target:
     types: [opened, reopened, synchronize, edited, ready_for_review, closed]
   workflow_call:
@@ -545,9 +550,9 @@ jobs:
               status(repo, pr["head"]["sha"], "pending", "等待整组 changelog PR 合并")
               return members
 
-          def sync(repo, base, cfg):
+          def sync(repo, base, cfg, groups=None):
               failures = []
-              for group in cfg["groups"]:
+              for group in groups or cfg["groups"]:
                   pr = None
                   try:
                       branch = f"baseline-test-20261113/{group}"
@@ -580,8 +585,9 @@ jobs:
               base = info["default_branch"]
               sha = ref(repo, base)["object"]["sha"]
               cfg = config(repo, sha)
-              group = os.environ.get("GROUP", "")
-              if group:
+              group = os.environ.get("GROUP", "").strip()
+              version = os.environ.get("VERSION", "").strip()
+              if group and version:
                   members = start(repo, base, sha, cfg, group, os.environ["VERSION"],
                                   os.environ.get("DRY_RUN", "").lower() == "true",
                                   os.environ.get("MEMBER_BASE", ""), os.environ.get("DISTRIBUTION", "unstable"),
@@ -624,7 +630,9 @@ jobs:
                           status(repo, pr["head"]["sha"], "failure", str(error))
                           raise
                       return
-                  sync(repo, base, cfg)
+                  if group and group not in cfg["groups"]:
+                      raise RuntimeError(f"未知组: {group}")
+                  sync(repo, base, cfg, [group] if group else None)
 
           if __name__ == "__main__":
               main()
