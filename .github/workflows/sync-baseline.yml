@@ -6,9 +6,10 @@ on:
   workflow_dispatch:
     inputs:
       group:
-        description: 只检查指定组（留空检查全部组）
-        required: false
-        type: string
+        description: 组
+        required: true
+        type: choice
+        options: [G1, G2, G3, G4]
   pull_request_target:
     types: [opened, reopened, synchronize, edited, ready_for_review, closed]
   workflow_call:
