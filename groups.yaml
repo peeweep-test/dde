@@ -15,9 +15,7 @@
 release_lines:
   master:
     member_branch: master
-
-# 目录名与 GitHub 仓库名不一致的成员
-  "develop-2500u3":
+  develop-2500u3:
     member_branch: "develop/2500u3"
     bases:
       go-lib: "4dccdedc11203fb34545f3c52cf5a0f6705139af"
@@ -37,6 +35,8 @@ release_lines:
       deepin-update-ui: "3c5734da360a39b154e3a418f9707403a6575045"
       xdg-desktop-portal-dde: "2b4407a0f20b746e13e2834189d7f5d44c769ecd"
       dde-appearance: "76145faddea5e80a14d2c3f2f57a30932a131dcb"
+
+# 目录名与 GitHub 仓库名不一致的成员
 repo_overrides:
   dde-session-shell-v25: dde-session-shell-snipe
   qt5platform-plugins: dde-qtplatform-plugins
@@ -60,7 +60,7 @@ groups:
     name: 服务与会话桌面应用
     versions:
       master: "6.8.1"
-      "develop-2500u3": "6.8.1"
+      develop-2500u3: "6.8.1"
     members:
       - go-lib
       - go-dbus-factory

@@ -689,9 +689,28 @@ class ProposeTests(unittest.TestCase):
         self.assertFalse(any("permission-workflows" in step.get("with", {})
                              for step in workflow["jobs"]["propose"]["steps"]))
 
+    def test_rewrite_preserves_following_comments_and_plain_line_ids(self):
+        text = yaml.safe_dump(self.github.cfg, sort_keys=False)
+        heading = "# Repository name overrides\n# Keep this note with its section"
+        text = text.replace("repo_overrides:", f"{heading}\nrepo_overrides:")
+        existing_branch_note = "    member_branch: master\n    # Existing master settings"
+        text = text.replace("    member_branch: master", existing_branch_note)
+        existing_version_note = "      master: 6.1.113\n      # Existing master version"
+        text = text.replace("      master: 6.1.113", existing_version_note)
+        member_heading = "    # Group members\n    members:"
+        text = text.replace("    members:", member_heading)
+        updated = propose.rewrite(text, self.github.line, self.github.branch,
+                                  self.github.bases, "6.1.113")
+        self.assertIn(f"{heading}\nrepo_overrides:", updated)
+        self.assertIn(existing_branch_note, updated)
+        self.assertIn(existing_version_note, updated)
+        self.assertEqual(updated.count(member_heading), 2)
+        self.assertIn(f"  {self.github.line}:\n", updated)
+        self.assertIn(f'      {self.github.line}: "6.1.113"\n', updated)
+
     def test_yaml_looking_line_ids_remain_strings(self):
         text = yaml.safe_dump(self.github.cfg, sort_keys=False)
-        for line in ("on", "yes", "123"):
+        for line in ("on", "yes", "123", "null", "2026-11-17"):
             with self.subTest(line=line):
                 updated = yaml.safe_load(propose.rewrite(text, line, "develop/u1",
                                                          self.github.bases, "6.1.113"))
