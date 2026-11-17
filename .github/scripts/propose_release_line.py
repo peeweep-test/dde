@@ -122,14 +122,21 @@ def rewrite(text, line, branch, bases, version):
     root = {k.value: v for k, v in yaml.compose(text).value}
     groups = {k.value: v for k, v in root["groups"].value}
     g2 = {k.value: v for k, v in groups["G2"].value}
+    line_key = line if yaml.safe_load(line) == line else json.dumps(line)
     additions = [
         (root["release_lines"].end_mark.line,
-         [f"  {json.dumps(line)}:", f"    member_branch: {json.dumps(branch)}", "    bases:"] +
+         [f"  {line_key}:", f"    member_branch: {json.dumps(branch)}", "    bases:"] +
          [f"      {member}: {json.dumps(sha)}" for member, sha in bases.items()]),
-        (g2["versions"].end_mark.line, [f"      {json.dumps(line)}: {json.dumps(version)}"]),
+        (g2["versions"].end_mark.line, [f"      {line_key}: {json.dumps(version)}"]),
     ]
     lines = text.splitlines()
     for position, new_lines in sorted(additions, reverse=True):
+        # YAML end_mark skips comments belonging to the following section.
+        indent = len(new_lines[0]) - len(new_lines[0].lstrip())
+        while position and (not lines[position - 1].strip() or (
+                lines[position - 1].lstrip().startswith("#")
+                and len(lines[position - 1]) - len(lines[position - 1].lstrip()) < indent)):
+            position -= 1
         lines[position:position] = new_lines
     updated = "\n".join(lines) + "\n"
     if yaml.safe_load(updated) != expected:
@@ -241,7 +248,8 @@ def propose(api, repo, line, target, source_branch="master", dry_run=True):
     body = (f"{MARKER}{json.dumps(identity)}\n-->\n\n源成员分支：`{source_branch}`。\n\n"
             "固定下列 SHA 作为新线分支快照。可在本草稿中修改历史 SHA 及初始版本，"
             "合并检查须重新验证所有基准。不自动创建成员分支或合并本 PR。\n\n" +
-            "\n".join(f"- `{member}`: `{sha}`" for member, sha in bases.items()))
+            "\n".join(f"- `{member}`: [{bases[member]}](https://github.com/{member_repo}/commit/{bases[member]})"
+                      for member, member_repo in members))
     details = {"title": f"chore: propose G2 {line} ({version})", "body": body}
     if pr:
         if any(pr.get(key) != value for key, value in details.items()):
