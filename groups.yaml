@@ -60,7 +60,7 @@ groups:
     name: 服务与会话桌面应用
     versions:
       master: "6.8.1"
-      develop-2500u3: "6.8.1"
+      develop-2500u3: "6.8.3"
     members:
       - go-lib
       - go-dbus-factory
