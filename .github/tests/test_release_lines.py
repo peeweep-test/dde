@@ -5,9 +5,12 @@ import contextlib
 import copy
 import io
 import json
+import os
 from pathlib import Path
+import runpy
 import sys
 import unittest
+from unittest.mock import patch
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import yaml
@@ -427,19 +430,20 @@ class ProposeTests(unittest.TestCase):
     def setUp(self):
         self.github = GitHub()
 
-    def run_propose(self, dry_run=True):
+    def run_propose(self, dry_run=True, source_branch="master"):
         with contextlib.redirect_stdout(io.StringIO()):
             return propose.propose(self.github.api, self.github.coordinator,
-                                   self.github.line, self.github.branch, dry_run=dry_run)
+                                   self.github.line, self.github.branch,
+                                   source_branch=source_branch, dry_run=dry_run)
 
-    def baseline(self, merged=False, deleted=False):
+    def baseline(self, merged=False, deleted=False, line="master", source_branch="master"):
         old = self.github.refs[self.github.coordinator, "master"]
-        self.release = {"group": "G2", "release_line": "master", "base_branch": "master",
+        self.release = {"group": "G2", "release_line": line, "base_branch": "master",
                         "base_sha": old, "version": "6.1.113", "started_at": "2026-11-17T00:00:00Z",
-                        "members": [{"repo": repo, "base": "master",
+                        "members": [{"repo": repo, "base": source_branch,
                                      "version": "1:6.1.113" if i == 0 else "6.1.113"}
                                     for i, (_, repo) in enumerate(self.github.members)]}
-        branch = "baseline-test-formal-prs-20261113/master/G2"
+        branch = f"baseline-test-formal-prs-20261113/{line}/G2"
         sha = self.github.add_commit(self.github.coordinator, self.github.files[self.github.coordinator, old],
                                      [old], branch=branch,
                                      message=propose.RELEASE_MARKER + json.dumps(self.release) + "\n-->")
@@ -485,8 +489,96 @@ class ProposeTests(unittest.TestCase):
                 self.run_propose(False)
             self.assertEqual(github.writes, [])
 
-    def test_draft_idempotence_and_human_historical_sha_survive_moving_source(self):
+    def test_unregistered_source_freezes_its_heads_and_survives_source_movement(self):
+        source, expected = "release/candidates/2500u3", {}
+        for member, repo in self.github.members:
+            files = copy.deepcopy(self.github.files[repo, self.github.bases[member]])
+            files["debian/changelog"] = self.github.changelog("6.1.112")
+            expected[member] = self.github.add_commit(repo, files, branch=source)
+            self.assertNotIn(expected[member], self.github.ancestors(repo, self.github.refs[repo, "master"]))
+        first = self.run_propose(False, source)
+        cfg = yaml.safe_load(self.github.files[self.github.coordinator, first["head"]["sha"]]["groups.yaml"])
+        self.assertEqual(cfg["release_lines"][self.github.line]["bases"], expected)
+        self.assertEqual(cfg["groups"]["G2"]["versions"][self.github.line], "6.1.112")
+        self.assertIn(f"`{source}`", first["body"])
+        for member, repo in self.github.members:
+            files = copy.deepcopy(self.github.files[repo, expected[member]])
+            files["debian/changelog"] = self.github.changelog("6.1.114")
+            self.github.add_commit(repo, files, [expected[member]], branch=source)
+        self.github.calls.clear()
+        self.github.writes.clear()
+        second = self.run_propose(False, source)
+        self.assertEqual(second["head"]["sha"], first["head"]["sha"])
+        self.assertEqual(self.github.writes, [])
+        self.assertFalse(any(path == f"repos/{repo}/git/ref/heads/{source}"
+                             for repo in (repo for _, repo in self.github.members)
+                             for path, _, _ in self.github.calls))
+        with self.assertRaisesRegex(RuntimeError, "源分支或目标输入不同"):
+            self.run_propose(False, "master")
+        self.assertEqual(self.github.writes, [])
+
+    def test_existing_target_can_be_its_own_unregistered_source(self):
+        for _, repo in self.github.members:
+            self.github.target(repo)
+        before = copy.deepcopy(self.github.refs)
+        pr = self.run_propose(False, self.github.branch)
+        cfg = yaml.safe_load(self.github.files[self.github.coordinator, pr["head"]["sha"]]["groups.yaml"])
+        self.assertEqual(cfg["release_lines"][self.github.line]["bases"], self.github.bases)
+        self.assertTrue(all(self.github.refs[repo, self.github.branch] == before[repo, self.github.branch]
+                            for _, repo in self.github.members))
+        self.assertTrue(all(path.startswith(f"repos/{self.github.coordinator}/")
+                            for path, _, _ in self.github.writes))
+
+    def test_invalid_missing_or_mixed_source_creates_nothing(self):
+        for source in ("", "develop/../candidate", "-candidate", "develop candidate", None):
+            with self.subTest(source=source), self.assertRaisesRegex(RuntimeError, "非法源成员分支"):
+                self.run_propose(False, source)
+            self.assertEqual(self.github.calls, [])
+        source = "release/candidate"
+        for failure in ("missing", "version"):
+            self.github = GitHub()
+            for member, repo in self.github.members:
+                self.github.add_commit(repo, self.github.files[repo, self.github.bases[member]], branch=source)
+            _, repo = self.github.members[-1]
+            if failure == "missing":
+                del self.github.refs[repo, source]
+            else:
+                self.github.files[repo, self.github.refs[repo, source]]["debian/changelog"] = self.github.changelog("6.1.114")
+            with self.subTest(failure=failure), self.assertRaisesRegex(
+                    RuntimeError, "源分支不存在" if failure == "missing" else "版本不一致"):
+                self.run_propose(False, source)
+            self.assertEqual(self.github.writes, [])
+
+    def test_registered_source_resolves_line_id_and_rechecks_reservation_before_writes(self):
+        source, line = "develop/releases/old-u1", "stable.u1"
+        for member, repo in self.github.members:
+            self.github.set_ref(repo, source, self.github.bases[member])
+        self.github.cfg["release_lines"][line] = {"member_branch": source}
+        self.github.cfg["groups"]["G2"]["versions"][line] = "6.1.113"
+        old = self.github.refs[self.github.coordinator, "master"]
+        self.github.add_commit(self.github.coordinator,
+                               {"groups.yaml": yaml.safe_dump(self.github.cfg, sort_keys=False)},
+                               [old], branch="master")
+        original, reads = self.github.api, 0
+        def api(url, data=None, **kwargs):
+            nonlocal reads
+            if url == f"repos/{self.github.coordinator}/git/ref/heads/baseline-test-formal-prs-20261113/{line}/G2":
+                reads += 1
+                if reads == 2:
+                    self.baseline(line=line, source_branch=source)
+            return original(url, data=data, **kwargs)
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, "stable.u1.*预留记录"):
+            propose.propose(api, self.github.coordinator, self.github.line, self.github.branch,
+                            source_branch=source, dry_run=False)
+        self.assertEqual(reads, 2)
+        self.assertEqual(self.github.writes, [])
+
+    def test_legacy_draft_and_human_historical_sha_survive_moving_source(self):
         first = self.run_propose(False)
+        commit = self.github.commits[self.github.coordinator, first["head"]["sha"]]
+        saved = json.loads(commit["message"].split(propose.MARKER, 1)[1].split("\n-->", 1)[0])
+        saved["source_line"] = saved.pop("source_branch")
+        commit["message"] = propose.MARKER + json.dumps(saved) + "\n-->"
         member, repo = self.github.members[0]
         old_files = copy.deepcopy(self.github.files[repo, self.github.bases[member]])
         historical = self.github.add_commit(repo, old_files)
@@ -568,20 +660,31 @@ class ProposeTests(unittest.TestCase):
             self.run_propose(False)
         self.assertEqual(self.github.writes, [])
 
-    def test_open_member_release_pr_blocks_source_line(self):
+    def test_open_member_release_pr_blocks_unregistered_source_branch(self):
+        source = "release/candidate"
+        for member, repo in self.github.members:
+            self.github.set_ref(repo, source, self.github.bases[member])
         _, repo = self.github.members[0]
         branch = "automation/update-changelog/6.1.114"
         self.github.set_ref(repo, branch, self.github.refs[repo, "master"])
-        self.github.add_pr(repo, branch)
+        self.github.add_pr(repo, branch, base=source)
         with self.assertRaisesRegex(RuntimeError, "成员发布 PR"):
-            self.run_propose(False)
+            self.run_propose(False, source)
         self.assertEqual(self.github.writes, [])
+
+    def test_old_workflow_environment_cannot_silently_fall_back_to_master(self):
+        with patch.dict(os.environ, {"SOURCE_LINE": "develop-2500u3"}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "请重新从表单发起"):
+                runpy.run_path(str(ROOT / ".github/scripts/propose_release_line.py"), run_name="__main__")
 
     def test_workflow_is_dispatch_only_and_dry_run_defaults_true(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/propose-release-line.yml").read_text())
         self.assertEqual(set(workflow[True]), {"workflow_dispatch"})
         inputs = workflow[True]["workflow_dispatch"]["inputs"]
-        self.assertEqual(inputs["source_line"]["default"], "master")
+        self.assertEqual(inputs["source_branch"]["default"], "master")
+        self.assertNotIn("source_line", inputs)
+        step = workflow["jobs"]["propose"]["steps"][-1]
+        self.assertEqual(step["env"]["SOURCE_BRANCH"], "${{ inputs.source_branch }}")
         self.assertIs(inputs["dry_run"]["default"], True)
         self.assertFalse(any("permission-workflows" in step.get("with", {})
                              for step in workflow["jobs"]["propose"]["steps"]))

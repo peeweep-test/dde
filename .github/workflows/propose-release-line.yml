@@ -11,8 +11,8 @@ on:
         description: 新发布线在各成员仓库中的分支名（例如 develop/2500u1）
         required: true
         type: string
-      source_line:
-        description: 代码来源的已有发布线 ID（默认 master；该线须无未完成的发布）
+      source_branch:
+        description: 各成员仓库中已有的代码来源分支（默认 master；例如 develop/2500u3，无需先登记发布线）
         required: false
         type: string
         default: master
@@ -54,11 +54,11 @@ jobs:
       - name: Install deps
         run: pip install --quiet pyyaml
 
-      - name: Propose fixed G2 snapshot
+      - name: Propose fixed member snapshot
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           RELEASE_LINE: ${{ inputs.release_line }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
-          SOURCE_LINE: ${{ inputs.source_line }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: python3 .github/scripts/propose_release_line.py

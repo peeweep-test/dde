@@ -33,22 +33,25 @@ def prs(api, repo, branch=None, base=None, state="all"):
     return api(f"repos/{repo}/pulls?{urlencode(query)}", paginate=True)
 
 
-def source_idle(api, repo, cfg, source, default, master_sha):
-    source_branch = release_lines(cfg)[source]["member_branch"]
+def source_idle(api, repo, cfg, source_branch, default, master_sha):
+    source_line = next((line for line, value in release_lines(cfg).items()
+                        if value["member_branch"] == source_branch), None)
     members = g2_members(cfg, repo.split("/")[0])
     member_prs = {}
     for _, member_repo in members:
         member_prs[member_repo] = prs(api, member_repo, base=source_branch)
         if any(p["state"] == "open" and p["head"]["ref"].startswith("automation/update-changelog/")
                for p in member_prs[member_repo]):
-            raise RuntimeError(f"源线 {source} 有未完成的成员发布 PR: {member_repo}")
-    branches = [f"baseline-test-formal-prs-20261113/{source}/G2"]
-    if source == "master":
+            raise RuntimeError(f"源分支 {source_branch} 有未完成的成员发布 PR: {member_repo}")
+    if source_line is None:
+        return
+    branches = [f"baseline-test-formal-prs-20261113/{source_line}/G2"]
+    if source_line == "master":
         branches.append("baseline-test-formal-prs-20261113/G2")
     for branch in branches:
         baselines = prs(api, repo, branch)
         if any(p["state"] == "open" for p in baselines):
-            raise RuntimeError(f"源线 {source} 有未完成的基线 PR: {branch}")
+            raise RuntimeError(f"源线 {source_line} 有未完成的基线 PR: {branch}")
         reservation = ref(api, repo, branch)
         if not reservation and not baselines:
             continue
@@ -59,7 +62,7 @@ def source_idle(api, repo, cfg, source, default, master_sha):
                               and latest["head"]["repo"]
                               and latest["head"]["repo"]["full_name"] == repo) else None
         if not completed:
-            raise RuntimeError(f"源线 {source} 有未完成或异常的预留记录: {branch}")
+            raise RuntimeError(f"源线 {source_line} 有未完成或异常的预留记录: {branch}")
         delta = api(f"repos/{repo}/compare/{completed['merge_commit_sha']}...{master_sha}")
         if delta["merge_base_commit"]["sha"] != completed["merge_commit_sha"]:
             raise RuntimeError(f"{branch} 的完成记录未合入协调默认分支")
@@ -71,7 +74,7 @@ def source_idle(api, repo, cfg, source, default, master_sha):
             commit = api(f"repos/{repo}/git/commits/{commit['parents'][0]['sha']}")
             depth += 1
         release = json.loads(commit["message"].split(RELEASE_MARKER, 1)[1].split("\n-->", 1)[0])
-        if (release.get("group") != "G2" or release.get("release_line", "master") != source
+        if (release.get("group") != "G2" or release.get("release_line", "master") != source_line
                 or release.get("base_branch") != default
                 or [m["repo"] for m in release["members"]] != [r for _, r in members]):
             raise RuntimeError(f"{branch} 的发布线或成员记录异常")
@@ -94,6 +97,8 @@ def snapshot(api, members, branch, bases=None, version=None):
         raise RuntimeError("草稿 bases 必须恰好包含 G2 的 17 个成员 ID")
     for member, repo in members:
         sha = bases[member] if bases is not None else ref(api, repo, branch)
+        if sha is None and bases is None:
+            raise RuntimeError(f"{repo} 源分支不存在: {branch}")
         if not isinstance(sha, str) or not SHA_RE.fullmatch(sha):
             raise RuntimeError(f"{repo} 缺少完整的基准 SHA")
         commit = api(f"repos/{repo}/git/commits/{sha}")
@@ -132,10 +137,13 @@ def rewrite(text, line, branch, bases, version):
     return updated
 
 
-def propose(api, repo, line, target, source="master", dry_run=True):
+def propose(api, repo, line, target, source_branch="master", dry_run=True):
     validate_line(line, target)
     if line == "master":
         raise RuntimeError("Propose 只新增 develop 发布线")
+    if (not isinstance(source_branch, str) or subprocess.run(
+            ["git", "check-ref-format", "--branch", source_branch], capture_output=True).returncode):
+        raise RuntimeError(f"非法源成员分支: {source_branch}")
     info = api(f"repos/{repo}")
     default = info["default_branch"]
     base_sha = ref(api, repo, default)
@@ -150,8 +158,6 @@ def propose(api, repo, line, target, source="master", dry_run=True):
         return None
     if target in {value["member_branch"] for value in lines.values()}:
         raise RuntimeError(f"成员分支 {target} 已映射到另一发布线")
-    if source not in lines:
-        raise RuntimeError(f"源发布线不存在: {source}")
     branch = f"automation/propose-release-line/{line}"
     if subprocess.run(["git", "check-ref-format", "--branch", branch],
                       capture_output=True).returncode:
@@ -160,7 +166,7 @@ def propose(api, repo, line, target, source="master", dry_run=True):
     if len([p for p in proposals if p["state"] == "open"]) > 1:
         raise RuntimeError("提案分支有重复的开放 PR，需人工核实")
     pr = proposals[0] if proposals else None
-    identity = {"release_line": line, "target_branch": target, "source_line": source}
+    identity = {"release_line": line, "target_branch": target, "source_branch": source_branch}
     if pr and (pr.get("merged_at") or pr["state"] != "open" or not pr.get("draft")
                or pr["base"]["ref"] != default or not pr["head"]["repo"]
                or pr["head"]["repo"]["full_name"] != repo):
@@ -189,18 +195,20 @@ def propose(api, repo, line, target, source="master", dry_run=True):
         for _ in range(101):
             if MARKER in commit["message"]:
                 saved = json.loads(commit["message"].split(MARKER, 1)[1].split("\n-->", 1)[0])
+                if "source_line" in saved and "source_branch" not in saved:
+                    saved["source_branch"] = lines.get(saved.pop("source_line"), {}).get("member_branch")
                 if saved != identity:
-                    raise RuntimeError("原草稿提案的源线或目标输入不同")
+                    raise RuntimeError("原草稿提案的源分支或目标输入不同")
                 break
             if not commit["parents"]:
                 raise RuntimeError("提案分支没有可确认的来源标记")
             commit = api(f"repos/{repo}/git/commits/{commit['parents'][0]['sha']}")
         else:
             raise RuntimeError("提案来源记录过深，需人工核实")
-    source_idle(api, repo, cfg, source, default, base_sha)
-    bases, version = snapshot(api, members, lines[source]["member_branch"], bases, version)
+    source_idle(api, repo, cfg, source_branch, default, base_sha)
+    bases, version = snapshot(api, members, source_branch, bases, version)
     updated = rewrite(text, line, target, bases, version)
-    output = (f"G2 {line} -> {target}，初始版本 {version}\n\n" +
+    output = (f"G2 {line} -> {target}，源成员分支 {source_branch}，初始版本 {version}\n\n" +
               "\n".join(f"- {member} ({member_repo}): {bases[member]}"
                         for member, member_repo in members) + "\n\n" +
               "".join(difflib.unified_diff(text.splitlines(True), updated.splitlines(True),
@@ -213,7 +221,7 @@ def propose(api, repo, line, target, source="master", dry_run=True):
         return {"bases": bases, "version": version, "config": updated}
     if ref(api, repo, default) != base_sha or ref(api, repo, branch) != previous:
         raise RuntimeError("配置或草稿在预检期间变化；请重跑，不覆盖新提交")
-    source_idle(api, repo, cfg, source, default, base_sha)
+    source_idle(api, repo, cfg, source_branch, default, base_sha)
     if previous is None or content(api, repo, "groups.yaml", previous) != updated:
         tree = api(f"repos/{repo}/git/commits/{base_sha}")["tree"]["sha"]
         tree = api(f"repos/{repo}/git/trees", {"base_tree": tree, "tree": [
@@ -230,7 +238,7 @@ def propose(api, repo, line, target, source="master", dry_run=True):
             except RuntimeError:
                 if ref(api, repo, branch) != commit["sha"]:
                     raise RuntimeError("提案分支并发创建或 API 失败；保留现状并重跑")
-    body = (f"{MARKER}{json.dumps(identity)}\n-->\n\n"
+    body = (f"{MARKER}{json.dumps(identity)}\n-->\n\n源成员分支：`{source_branch}`。\n\n"
             "固定下列 SHA 作为新线分支快照。可在本草稿中修改历史 SHA 及初始版本，"
             "合并检查须重新验证所有基准。不自动创建成员分支或合并本 PR。\n\n" +
             "\n".join(f"- `{member}`: `{sha}`" for member, sha in bases.items()))
@@ -254,6 +262,8 @@ def propose(api, repo, line, target, source="master", dry_run=True):
 
 
 if __name__ == "__main__":
+    if "SOURCE_BRANCH" not in os.environ and "SOURCE_LINE" in os.environ:
+        raise RuntimeError("来源参数已改为 source_branch；请重新从表单发起，不要重跑旧参数的运行")
     propose(api, os.environ["GITHUB_REPOSITORY"], os.environ["RELEASE_LINE"],
-            os.environ["TARGET_BRANCH"], os.environ.get("SOURCE_LINE", "master"),
+            os.environ["TARGET_BRANCH"], os.environ.get("SOURCE_BRANCH", "master"),
             os.environ.get("DRY_RUN", "true").lower() == "true")
