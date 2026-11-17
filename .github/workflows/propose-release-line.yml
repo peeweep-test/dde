@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       release_line:
-        description: 新 G2 发布线 ID（例如 develop-2500u1）
+        description: 新发布线 ID（例如 develop-2500u1）
         required: true
         type: string
       target_branch:
-        description: 17 个成员的统一分支（例如 develop/2500u1）
+        description: 新发布线在各成员仓库中的分支名（例如 develop/2500u1）
         required: true
         type: string
       source_line:
-        description: 无未完成 G2 发布的源线
+        description: 代码来源的已有发布线 ID（默认 master；该线须无未完成的发布）
         required: false
         type: string
         default: master
