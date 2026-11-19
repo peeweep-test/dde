@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 UnionTech Software Technology Co., Ltd.
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Propose a fixed G2 snapshot in a draft configuration PR, never on master."""
 
 import copy

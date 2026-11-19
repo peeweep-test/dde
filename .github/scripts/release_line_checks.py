@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 UnionTech Software Technology Co., Ltd.
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Read-only G2 release-line checks shared by the coordinator and Prepare."""
 
 import base64
@@ -251,10 +253,10 @@ def check_member_workflows(api, repo, branch, info=None):
     return target
 
 
-def actions_app_id(api):
-    app = api("apps/github-actions")
-    if app.get("slug") != "github-actions" or type(app.get("id")) is not int or app["id"] <= 0:
-        raise ReadinessError("PROTECTION_FAILED", "无法确认 GitHub Actions 的 App 来源")
+def release_app_id(api):
+    app = api("app")
+    if type(app.get("id")) is not int or app["id"] <= 0:
+        raise ReadinessError("PROTECTION_FAILED", "无法确认发布 App 的身份")
     return app["id"]
 
 
@@ -327,9 +329,9 @@ def check_member_ready(api, repo, branch):
         target = check_member_workflows(api, repo, branch)
         state = "PROTECTION_FAILED"
         protection = read_protection(api, repo, branch, target)
-        if not protection_ready(protection, actions_app_id(api)):
+        if not protection_ready(protection, release_app_id(api)):
             raise ReadinessError(state, f"{repo}:{branch} 需要 PR、禁止绕过/force/delete、严格检查 "
-                                 f"{GUARD_CONTEXT}（来源 GitHub Actions）")
+                                 f"{GUARD_CONTEXT}（来源发布 App）")
         return {"repo": repo, "branch": branch, "state": "READY"}
     except RuntimeError:
         raise
