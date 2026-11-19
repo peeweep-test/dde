@@ -100,6 +100,7 @@ jobs:
         id: coordinate
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          APP_ID: ${{ secrets.APP_ID }}
           GROUP: ${{ inputs.group }}
           VERSION: ${{ inputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}
@@ -291,7 +292,7 @@ jobs:
 
           def check_member_ready(repo, branch):
               from release_line_checks import check_member_ready as check_ready
-              return check_ready(api, repo, branch)
+              return check_ready(api, repo, branch, int(os.environ["APP_ID"]))
 
           def rewrite(text, group, version, release_line="master"):
               before = yaml.safe_load(text)

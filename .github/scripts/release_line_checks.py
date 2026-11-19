@@ -5,6 +5,7 @@
 import base64
 import fnmatch
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -253,11 +254,10 @@ def check_member_workflows(api, repo, branch, info=None):
     return target
 
 
-def release_app_id(api):
-    app = api("app")
-    if type(app.get("id")) is not int or app["id"] <= 0:
+def release_app_id(value):
+    if type(value) is not int or value <= 0:
         raise ReadinessError("PROTECTION_FAILED", "无法确认发布 App 的身份")
-    return app["id"]
+    return value
 
 
 def read_protection(api, repo, branch, head=None):
@@ -322,14 +322,19 @@ def protection_ready(protection, app_id):
                     for value in checks))
 
 
-def check_member_ready(api, repo, branch):
+def check_member_ready(api, repo, branch, app_id=None):
     """Return READY only after live workflow and effective protection checks; never writes."""
+    if app_id is None:
+        try:
+            app_id = int(os.environ["APP_ID"])
+        except (KeyError, ValueError) as error:
+            raise ReadinessError("PROTECTION_FAILED", "缺少发布 App ID") from error
     state = "TEMPLATE_MISSING"
     try:
         target = check_member_workflows(api, repo, branch)
         state = "PROTECTION_FAILED"
         protection = read_protection(api, repo, branch, target)
-        if not protection_ready(protection, release_app_id(api)):
+        if not protection_ready(protection, release_app_id(app_id)):
             raise ReadinessError(state, f"{repo}:{branch} 需要 PR、禁止绕过/force/delete、严格检查 "
                                  f"{GUARD_CONTEXT}（来源发布 App）")
         return {"repo": repo, "branch": branch, "state": "READY"}
