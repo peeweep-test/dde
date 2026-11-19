@@ -102,7 +102,7 @@ groups:
       master: "6.8.1"
       develop-2500u3: "6.8.1"
       develop-2500u4: "6.8.1"
-      develop-2500u5: "6.8.1"
+      develop-2500u5: "6.8.2"
     members:
       - go-lib
       - go-dbus-factory
