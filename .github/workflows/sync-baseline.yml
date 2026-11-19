@@ -62,6 +62,7 @@ jobs:
   coordinate:
     name: Coordinate group release
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     if: >
       github.event_name != 'pull_request_target' ||
       github.event.pull_request.head.repo.full_name == github.repository ||
@@ -126,6 +127,7 @@ jobs:
           import yaml
 
           sys.path.insert(0, os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), ".github", "scripts"))
+          from release_line_checks import MAX_TRAVERSAL_DEPTH
 
           MARKER = "<!-- group-release\n"
           CONTEXT = "group-release-ready"
@@ -336,7 +338,7 @@ jobs:
               merges = []
               # shortcut: 仅支持保留原提交的 merge 同步；需要 rebase/merge queue 时再扩展校验。
               while MARKER not in commit["message"]:
-                  if len(commit["parents"]) != 2 or len(merges) >= 100:
+                  if len(commit["parents"]) != 2 or len(merges) >= MAX_TRAVERSAL_DEPTH:
                       raise RuntimeError(f"{group} 的 baseline 分支没有发布记录，需人工核实，不能覆盖")
                   merges.append(commit)
                   commit = api(f"repos/{repo}/git/commits/{commit['parents'][0]['sha']}")

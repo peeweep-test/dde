@@ -11,7 +11,8 @@ from urllib.parse import quote, urlencode
 import yaml
 
 from release_line_checks import (
-    SHA_RE, api, content, g2_members, head_version, release_lines, validate_line,
+    MAX_TRAVERSAL_DEPTH, SHA_RE, api, content, g2_members, head_version, release_lines,
+    validate_line,
 )
 
 
@@ -199,7 +200,7 @@ def propose(api, repo, line, target, source_branch="master", dry_run=True):
                 != [("groups.yaml", "modified")]):
             raise RuntimeError("原提案只能增加本线配置与初始版本，不能覆盖其他已合并配置")
         commit = api(f"repos/{repo}/git/commits/{previous}")
-        for _ in range(101):
+        for _ in range(MAX_TRAVERSAL_DEPTH + 1):
             if MARKER in commit["message"]:
                 saved = json.loads(commit["message"].split(MARKER, 1)[1].split("\n-->", 1)[0])
                 if "source_line" in saved and "source_branch" not in saved:

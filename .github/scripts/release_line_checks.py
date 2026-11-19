@@ -13,6 +13,8 @@ import yaml
 
 GUARD_CONTEXT = "group-version-guard"
 WORKFLOW_FILES = ("call-update-changelog.yml", "call-verify-group-version.yml")
+G2_MEMBER_COUNT = 17
+MAX_TRAVERSAL_DEPTH = 100
 RELEASE_INPUTS = {
     "version": "string", "name": "string", "email": "string",
     "base_branch": "string", "distribution": "string", "create_pr": "boolean",
@@ -91,9 +93,9 @@ def release_lines(cfg):
 
 def g2_members(cfg, owner):
     members = cfg.get("groups", {}).get("G2", {}).get("members")
-    if (not isinstance(members, list) or len(members) != 17
+    if (not isinstance(members, list) or len(members) != G2_MEMBER_COUNT
             or any(not isinstance(m, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", m)
-                   for m in members) or len(set(members)) != 17):
+                   for m in members) or len(set(members)) != G2_MEMBER_COUNT):
         raise RuntimeError("只支持 groups.G2.members 中现有的 17 个唯一成员")
     overrides = cfg.get("repo_overrides", {})
     result = []
@@ -102,7 +104,7 @@ def g2_members(cfg, owner):
         if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", name):
             raise RuntimeError(f"成员 {member} 的 repo_overrides 无效")
         result.append((member, f"{owner}/{name}"))
-    if len({repo for _, repo in result}) != 17:
+    if len({repo for _, repo in result}) != G2_MEMBER_COUNT:
         raise RuntimeError("G2 仓库映射重复")
     return result
 
@@ -212,6 +214,8 @@ def check_workflow_file(api, repo, filename, ref, branch, text=None):
         if not match:
             raise ValueError("共享工作流引用无效")
         shared_repo, path, shared_ref = match.groups()
+        if shared_repo != f"{repo.split('/')[0]}/.github":
+            raise ValueError("共享工作流必须引用当前组织的 .github 仓库")
         if dispatch and any(job.get("with", {}).get(name) != "${{ inputs." + name + " }}"
                             for name in RELEASE_INPUTS):
             raise ValueError("发版入口必须原样传递 base_branch 及现有输入")

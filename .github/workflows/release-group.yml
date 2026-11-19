@@ -52,6 +52,7 @@ concurrency:
 
 jobs:
   plan:
+    timeout-minutes: 45
     uses: ./.github/workflows/sync-baseline.yml
     with:
       group: ${{ inputs.group }}
@@ -69,6 +70,7 @@ jobs:
     needs: plan
     if: ${{ !inputs.dry_run && needs.plan.outputs.repos != '[]' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -123,6 +125,7 @@ jobs:
   finalize:
     needs: [plan, dispatch]
     if: ${{ always() && !cancelled() && !inputs.dry_run && inputs.create_pr && needs.plan.result == 'success' && (needs.dispatch.result == 'success' || needs.dispatch.result == 'skipped') }}
+    timeout-minutes: 45
     uses: ./.github/workflows/sync-baseline.yml
     with:
       group: ${{ inputs.group }}
