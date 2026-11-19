@@ -617,7 +617,7 @@ jobs:
                                   "variables": {"id": pr["node_id"]}})
               return results
 
-          def wait_for_member_prs(release):
+          def wait_for_member_prs(release, wait=True):
               timeout = int(os.environ.get("MEMBER_PR_WAIT_SECONDS", "1200"))
               interval = max(1, int(os.environ.get("MEMBER_PR_POLL_SECONDS", "30")))
               deadline = time.monotonic() + timeout
@@ -630,8 +630,8 @@ jobs:
                              if state in ("missing", "running")]
                   if not waiting:
                       return prs
-                  if release["group"] == "G2":
-                      print(f"G2/{release.get('release_line', 'master')}: 已保留发布记录，等待成员发布 PR: {', '.join(waiting)}")
+                  if not wait:
+                      print(f"等待成员发布 PR: {', '.join(waiting)}")
                       return None
                   if time.monotonic() >= deadline:
                       raise RuntimeError("等待成员发布 PR 超时: " + ", ".join(waiting))
@@ -848,7 +848,7 @@ jobs:
                           if reservation:
                               if release and release.get("wait_for_member_prs"):
                                   if group == "G2":
-                                      prs = wait_for_member_prs(release)
+                                      prs = wait_for_member_prs(release, wait=False)
                                       if prs is None:
                                           continue
                                       pr = create_pr(repo, branch, base, release, prs)
