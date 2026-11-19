@@ -55,6 +55,26 @@ release_lines:
       deepin-update-ui: "bfe77e15212f72bb02b050760ebf0dec8eec585d"
       xdg-desktop-portal-dde: "320fc4276d52b659eaafcc3251835a24931804cd"
       dde-appearance: "d04d9a1c69f00470e3b64381d808f80b77ecdca8"
+  develop-2500u5:
+    member_branch: "develop/2500u5"
+    bases:
+      go-lib: "cec68ba311be865fc239954d33be90512d4d2cf7"
+      go-dbus-factory: "f5a306592e23c64b1584f057d7d602dad7f8e1ef"
+      dde-api: "9a8b091d11c96d2ee336a68637656fe1a93edba5"
+      dde-daemon: "37edd2215267a059897482c94123562e2ced50fb"
+      dde-services: "20209168e5f671c7145a2a1248c41cd5c631919d"
+      dde-session: "72a8171c34ce632df8a3a1b27f63729feeeb27c8"
+      dde-session-shell-v25: "795de72e2dfdc270646030aef20c32919ec16d68"
+      dde-shell: "0e1467215d554898d17fb4a6db7e56d53146f6e9"
+      dde-tray-loader: "3fd24a436a3568e304a5a55629356b421fcb42f1"
+      dde-application-manager: "6e3909b315bb92c00fa36110b32e7e7f09326115"
+      deepin-service-manager: "d911c34ec313f01e5ea6c97d48a22859833a0f82"
+      dde-control-center: "2c4cf9080f0cce7e53675362f6658a0444c532a9"
+      dde-launchpad: "71c78a916a4a3603294f186092c7da3fad54f991"
+      dde-network-core: "9f7aa19698e91f450594c1bd3b9a55f7090344d2"
+      deepin-update-ui: "bfe77e15212f72bb02b050760ebf0dec8eec585d"
+      xdg-desktop-portal-dde: "320fc4276d52b659eaafcc3251835a24931804cd"
+      dde-appearance: "d04d9a1c69f00470e3b64381d808f80b77ecdca8"
 
 # 目录名与 GitHub 仓库名不一致的成员
 repo_overrides:
@@ -82,6 +102,7 @@ groups:
       master: "6.8.1"
       develop-2500u3: "6.8.1"
       develop-2500u4: "6.8.1"
+      develop-2500u5: "6.8.1"
     members:
       - go-lib
       - go-dbus-factory
