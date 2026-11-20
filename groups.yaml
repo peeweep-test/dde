@@ -165,7 +165,7 @@ groups:
       develop-2500u5: "6.8.1"
       develop-2500u6: "6.8.1"
       develop-2500u7: "6.8.1"
-      develop-2500u8: "6.8.1"
+      develop-2500u8: "6.8.2"
     members:
       - go-lib
       - go-dbus-factory
